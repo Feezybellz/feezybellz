@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Feezybellz | Your Digital Hub</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome CDN for icons -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"
+      xintegrity="sha512-Fo3rlrZj/k7ujTnHg4CGR2D7kSs0XpPtiSzpgzbyal2+Xl8X3U5W1n1H7Rz/B/4e4/5X0C/9uG+p8Q8C8M8Q=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    />
+    <!-- Google Font: Inter -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        font-family: "Inter", sans-serif;
+        background-color: #0f172a; /* Slate 900 */
+        color: #e2e8f0; /* Slate 200 */
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        margin: 0;
+      }
+      .container {
+        background-color: #1e293b; /* Slate 800 */
+        padding: 2rem;
+        border-radius: 1.5rem; /* Large rounded corners */
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+        max-width: 90%;
+        width: 400px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem; /* Space between sections */
+      }
+      .profile-pic {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 4px solid #3b82f6; /* Blue 500 */
+        margin: 0 auto 1rem;
+        box-shadow: 0 0 15px rgba(59, 130, 246, 0.6);
+      }
+      .link-button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        padding: 1rem 1.5rem;
+        background-color: #334155; /* Slate 700 */
+        color: #f8fafc; /* Slate 50 */
+        border-radius: 0.75rem; /* Rounded corners for buttons */
+        text-decoration: none;
+        font-weight: 500;
+        transition: all 0.2s ease-in-out;
+        border: 1px solid #475569; /* Slate 600 */
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+      }
+      .link-button:hover {
+        background-color: #3b82f6; /* Blue 500 */
+        border-color: #3b82f6;
+        transform: translateY(-3px) scale(1.01);
+        box-shadow: 0 6px 15px rgba(59, 130, 246, 0.4);
+      }
+      .link-button i {
+        margin-right: 0.75rem;
+        font-size: 1.2rem;
+      }
+      .domain-link {
+        color: #94a3b8; /* Slate 400 */
+        font-size: 0.9rem;
+        text-decoration: none;
+        transition: color 0.2s ease-in-out;
+      }
+      .domain-link:hover {
+        color: #3b82f6; /* Blue 500 */
+        text-decoration: underline;
+      }
+
+      /* desktop width to reduce */
+      @media (min-width: 768px) {
+        .container {
+          width: 600px !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <!-- Profile Section -->
+      <div>
+        <img
+          src="feezybellz.jpg"
+          alt="Profile Picture"
+          class="profile-pic"
+          onerror="this.onerror=null;this.src='https://placehold.co/120x120/3b82f6/ffffff?text=FB';"
+        />
+        <h1 class="text-3xl font-bold text-gray-50 mb-1">
+          Afeez Adedayo Bello
+        </h1>
+        <p class="text-lg text-gray-300">@feezybellz</p>
+      </div>
+
+      <!-- Social Links Section -->
+      <div id="social-links" class="flex flex-col gap-4 w-full">
+        <!-- Links will be dynamically inserted here by JavaScript -->
+      </div>
+
+      <!-- Domain Link -->
+      <a
+        href="https://feezybellz.me"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="domain-link mt-4"
+      >
+        feezybellz.me
+      </a>
+    </div>
+
+    <script>
+      // Array of social media objects
+      const socialLinksData = [
+        {
+          name: "Instagram",
+          link: "https://instagram.com/feezybellz",
+          icon: "fab fa-instagram", // Using fab for brand icons
+          order: 5,
+        },
+        {
+          name: "Twitter (X)",
+          link: "https://twitter.com/feezybellz",
+          icon: "fab fa-twitter",
+          order: 2,
+        },
+        {
+          name: "LinkedIn",
+          link: "https://linkedin.com/in/feezybellz", // Placeholder, please update
+          icon: "fab fa-linkedin-in",
+          order: 3,
+        },
+        {
+          name: "GitHub",
+          link: "https://github.com/feezybellz", // Placeholder, please update
+          icon: "fab fa-github",
+          order: 1,
+        },
+        {
+          name: "Discord",
+          link: "https://discord.com/users/feezybellz",
+          icon: "fab fa-discord",
+          order: 4,
+        },
+
+        // {
+        //   name: "Portfolio",
+        //   link: "https://feezybellz.me", // Link to your domain or portfolio
+        //   icon: "fas fa-globe",
+        // },
+        // Add more social links here!
+        // {
+        //     name: "YouTube",
+        //     link: "https://youtube.com/yourchannel",
+        //     icon: "fab fa-youtube",
+        // },
+      ];
+
+      document.addEventListener("DOMContentLoaded", () => {
+        const socialLinksContainer = document.getElementById("social-links");
+        const orderedSocialLinks = socialLinksData.sort(
+          (a, b) => a.order - b.order
+        );
+
+        orderedSocialLinks.forEach((social) => {
+          const linkElement = document.createElement("a");
+          linkElement.href = social.link;
+          linkElement.target = "_blank"; // Open in a new tab
+          linkElement.rel = "noopener noreferrer"; // Security best practice
+          linkElement.className = "link-button";
+
+          const iconElement = document.createElement("i");
+          iconElement.className = social.icon;
+
+          const textElement = document.createElement("span");
+          textElement.textContent = social.name;
+
+          linkElement.appendChild(iconElement);
+          linkElement.appendChild(textElement);
+          socialLinksContainer.appendChild(linkElement);
+        });
+      });
+    </script>
+  </body>
+</html>
