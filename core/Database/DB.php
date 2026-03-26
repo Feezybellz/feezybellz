@@ -16,11 +16,10 @@ class DB
      */
     public static function addConnection(string $name, array $config): void
     {
-        $driver = self::createDriver($config['driver'] ?? 'mysql');
-        $driver->connect($config);
-        
-        self::$drivers[$name] = $driver;
         self::$connections[$name] = $config;
+        if (isset(self::$drivers[$name])) {
+            unset(self::$drivers[$name]);
+        }
     }
     
     /**
@@ -32,7 +31,15 @@ class DB
     public static function connection(string $name = 'default'): DatabaseDriverInterface
     {
         if (!isset(self::$drivers[$name])) {
-            throw new \Exception("Database connection '{$name}' not found");
+            if (!isset(self::$connections[$name])) {
+                throw new \Exception("Database connection '{$name}' not found");
+            }
+
+            $config = self::$connections[$name];
+            $driver = self::createDriver($config['driver'] ?? 'mysql');
+            $driver->connect($config);
+            
+            self::$drivers[$name] = $driver;
         }
         
         return self::$drivers[$name];

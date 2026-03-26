@@ -691,7 +691,7 @@ class Router
     protected static function registerInternalRoutes(): void
     {
         self::get('/_framework/websocket.js', function(\Framework\Core\Http\Request $request, \Framework\Core\Http\Response $response) {
-            $path = dirname(__DIR__, 2) . '/WebSocket/assets/websocket.js';
+            $path = dirname(__DIR__) . '/WebSocket/assets/websocket.js';
             $response->file($path, 'application/javascript');
         });
     }
