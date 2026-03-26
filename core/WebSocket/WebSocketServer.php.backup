@@ -1,0 +1,601 @@
+<?php
+
+namespace Framework\Core\WebSocket;
+
+class WebSocketServer
+{
+    private $socket;
+    private array $clients = [];
+    private array $rooms = [];
+    private array $eventHandlers = [];
+    private array $socketToClientMap = []; // O(1) lookup: socket resource ID => client ID
+    private string $host;
+    private int $port;
+    private bool $running = false;
+    private int $pingInterval = 30; // Send ping every 30 seconds
+    private int $pingTimeout = 10; // Disconnect if no pong within 10 seconds
+    private float $lastPingTime = 0;
+    private array $allowedOrigins = []; // Empty = allow all (set for production!)
+    
+    public function __construct(string $host = '0.0.0.0', int $port = 8080)
+    {
+        $this->host = $host;
+        $this->port = $port;
+        $this->lastPingTime = microtime(true);
+    }
+    
+    /**
+     * Set allowed origins for CSWSH protection
+     */
+    public function setAllowedOrigins(array $origins): void
+    {
+        $this->allowedOrigins = $origins;
+    }
+    
+    /**
+     * Set ping/pong configuration
+     */
+    public function setPingConfig(int $interval = 30, int $timeout = 10): void
+    {
+        $this->pingInterval = $interval;
+        $this->pingTimeout = $timeout;
+    }
+    
+    /**
+     * Start the WebSocket server
+     */
+    public function start(): void
+    {
+        // Create socket
+        $address = "tcp://{$this->host}:{$this->port}";
+        $this->socket = @\stream_socket_server($address, $errno, $errstr);
+        
+        if (!$this->socket) {
+            throw new \RuntimeException("Failed to create socket: {$errstr} ({$errno})");
+        }
+        
+        \stream_set_blocking($this->socket, false);
+        
+        $this->running = true;
+        $this->log("WebSocket server started on {$this->host}:{$this->port}");
+        
+        $this->loop();
+    }
+    
+    /**
+     * Main event loop
+     */
+    private function loop(): void
+    {
+        while ($this->running) {
+            $read = array_merge([$this->socket], array_column($this->clients, 'socket'));
+            $write = null;
+            $except = null;
+            
+            // Use shorter timeout for more responsive ping checks
+            $result = \stream_select($read, $write, $except, 0, 200000);
+            
+            if ($result === false) {
+                $this->log("stream_select failed: " . error_get_last()['message']);
+                break;
+            }
+            
+            // Check for new connections
+            if (in_array($this->socket, $read)) {
+                $newSocket = \stream_socket_accept($this->socket, 0);
+                if ($newSocket !== false) {
+                    \stream_set_blocking($newSocket, false);
+                    $this->handleNewConnection($newSocket);
+                }
+                unset($read[array_search($this->socket, $read)]);
+            }
+            
+            // Check existing clients
+            foreach ($read as $clientSocket) {
+                $clientId = $this->getClientIdBySocket($clientSocket);
+                if ($clientId === null) continue;
+                
+                $data = \fread($clientSocket, 8192);
+                
+                if ($data === false || $data === '') {
+                    if (feof($clientSocket)) {
+                        $this->disconnect($clientId);
+                    }
+                } else {
+                    $this->handleClientData($clientId, $data);
+                }
+            }
+            
+            // Heartbeat: Send pings and check for timeouts
+            $this->checkHeartbeat();
+        }
+    }
+    
+    /**
+     * Handle new connection
+     */
+    private function handleNewConnection($socket): void
+    {
+        $clientId = uniqid('client_', true);
+        $resourceId = (int)$socket;
+        
+        $this->clients[$clientId] = [
+            'socket' => $socket,
+            'handshake' => false,
+            'rooms' => [],
+            'buffer' => '', // Buffer for partial frames
+            'lastPong' => microtime(true),
+            'pendingFrames' => [] // For fragmented messages
+        ];
+        
+        // O(1) lookup mapping
+        $this->socketToClientMap[$resourceId] = $clientId;
+        
+        $this->log("New connection: {$clientId}");
+    }
+    
+    /**
+     * Handle client data with buffering for partial frames
+     */
+    private function handleClientData(string $clientId, string $data): void
+    {
+        $client = &$this->clients[$clientId];
+        
+        if (!$client['handshake']) {
+            $this->performHandshake($clientId, $data);
+            return;
+        }
+        
+        // Append to buffer
+        $client['buffer'] .= $data;
+        
+        // Try to decode frames from buffer
+        while (strlen($client['buffer']) >= 2) {
+            $frame = WebSocketFrame::decode($client['buffer']);
+            
+            // Check if we have a complete frame
+            if ($frame['complete'] === false) {
+                // Not enough data yet, wait for more
+                break;
+            }
+            
+            // Remove processed bytes from buffer
+            $client['buffer'] = substr($client['buffer'], $frame['bytesRead']);
+            
+            // Handle different opcodes
+            if ($frame['opcode'] === 0x8) {
+                // Close frame
+                $this->sendFrame($clientId, '', 0x8); // Echo close
+                $this->disconnect($clientId);
+                return;
+            }
+            
+            if ($frame['opcode'] === 0x9) {
+                // Ping frame - respond with pong
+                $this->sendFrame($clientId, $frame['payload'], 0xA);
+                return;
+            }
+            
+            if ($frame['opcode'] === 0xA) {
+                // Pong frame - update last pong time
+                $client['lastPong'] = microtime(true);
+                continue;
+            }
+            
+            if ($frame['opcode'] === 0x1 || $frame['opcode'] === 0x2) {
+                // Text or binary frame
+                $this->handleDataFrame($clientId, $frame);
+            }
+        }
+    }
+    
+    /**
+     * Handle data frames (with fragmentation support)
+     */
+    private function handleDataFrame(string $clientId, array $frame): void
+    {
+        $client = &$this->clients[$clientId];
+        
+        // Handle fragmentation
+        if ($frame['fin'] === 0) {
+            // Fragment - store for later
+            $client['pendingFrames'][] = $frame['payload'];
+            return;
+        }
+        
+        // Final frame
+        $payload = $frame['payload'];
+        if (!empty($client['pendingFrames'])) {
+            // Combine fragments
+            $payload = implode('', $client['pendingFrames']) . $payload;
+            $client['pendingFrames'] = [];
+        }
+        
+        // Parse and handle message
+        $message = json_decode($payload, true);
+        
+        if ($message && isset($message['event'])) {
+            $this->handleEvent($clientId, $message['event'], $message['data'] ?? null);
+        }
+    }
+    
+    /**
+     * Perform WebSocket handshake with security validation
+     */
+    private function performHandshake(string $clientId, string $data): void
+    {
+        $headers = $this->parseHeaders($data);
+        
+        // Validate required headers
+        if (!isset($headers['Sec-WebSocket-Key']) || !isset($headers['Upgrade']) || !isset($headers['Connection'])) {
+            $this->log("Invalid handshake headers from {$clientId}");
+            $this->disconnect($clientId);
+            return;
+        }
+        
+        // Validate upgrade headers
+        if (stripos($headers['Upgrade'], 'websocket') === false || stripos($headers['Connection'], 'upgrade') === false) {
+            $this->log("Invalid upgrade headers from {$clientId}");
+            $this->disconnect($clientId);
+            return;
+        }
+        
+        // CSWSH Protection: Validate Origin if configured
+        if (!empty($this->allowedOrigins)) {
+            $origin = $headers['Origin'] ?? $headers['Sec-WebSocket-Origin'] ?? '';
+            
+            if (!in_array($origin, $this->allowedOrigins)) {
+                $this->log("Rejected connection from unauthorized origin: {$origin}");
+                $this->disconnect($clientId);
+                return;
+            }
+        }
+        
+        $key = $headers['Sec-WebSocket-Key'];
+        $acceptKey = base64_encode(sha1($key . '258EAFA5-E914-47DA-95CA-C5AB0DC85B11', true));
+        
+        $response = "HTTP/1.1 101 Switching Protocols\r\n";
+        $response .= "Upgrade: websocket\r\n";
+        $response .= "Connection: Upgrade\r\n";
+        $response .= "Sec-WebSocket-Accept: {$acceptKey}\r\n\r\n";
+        
+        $written = \fwrite($this->clients[$clientId]['socket'], $response);
+        if ($written === false) {
+            $this->log("Failed to send handshake response to {$clientId}");
+            $this->disconnect($clientId);
+            return;
+        }
+        
+            // Fragment - store for later
+            $client['pendingFrames'][] = $frame['payload'];
+            return;
+        }
+        
+        // Final frame
+        $payload = $frame['payload'];
+        if (!empty($client['pendingFrames'])) {
+            // Combine fragments
+            $payload = implode('', $client['pendingFrames']) . $payload;
+            $client['pendingFrames'] = [];
+        }
+        
+        // Parse and handle message
+        $message = json_decode($payload, true);
+        
+        if ($message && isset($message['event'])) {
+            $this->handleEvent($clientId, $message['event'], $message['data'] ?? null);
+        if ($frame['opcode'] === 0x1 || $frame['opcode'] === 0x2) {
+            // Text or binary frame
+            $message = json_decode($frame['payload'], true);
+            
+            if ($message && isset($message['event'])) {
+                $this->handleEvent($clientId, $message['event'], $message['data'] ?? null);
+            }
+        }
+    }
+    
+    /**
+     * Perform WebSocket handshake
+     */
+    private function performHandshake(string $clientId, string $data): void
+    {
+        $headers = $this->parseHeaders($data);
+        
+        if (!isset($headers['Sec-WebSocket-Key'])) {
+            $this->disconnect($clientId);
+            return;
+        }
+        
+        $key = $headers['Sec-WebSocket-Key'];
+        $acceptKey = base64_encode(sha1($key . '258EAFA5-E914-47DA-95CA-C5AB0DC85B11', true));
+        
+        $response = "HTTP/1.1 101 Switching Protocols\r\n";
+        $response .= "Upgrade: websocket\r\n";
+        $response .= "Connection: Upgrade\r\n";
+        $response .= "Sec-WebSocket-Accept: {$acceptKey}\r\n\r\n";
+        
+        \fwrite($this->clients[$clientId]['socket'], $response);
+        $this->clients[$clientId]['handshake'] = true;
+        
+        $this->log("Handshake completed: {$clientId}");
+        $this->emit('connection', ['clientId' => $clientId]);
+    }
+    
+    /**
+     * Parse HTTP headers
+     */
+    private function parseHeaders(string $data): array
+    {
+        $headers = [];
+        $lines = explode("\r\n", $data);
+        
+        foreach ($lines as $line) {
+            if (strpos($line, ':') !== false) {
+                [$key, $value] = explode(':', $line, 2);
+                $headers[trim($key)] = trim($value);
+            }
+        }
+        
+        return $headers;
+    }
+    
+    /**
+     * Send data to client
+     */
+    public function send(string $clientId, string $event, $data = null): bool
+    {
+        if (!isset($this->clients[$clientId])) {
+            return false;
+        }
+        
+        $message = json_encode(['event' => $event, 'data' => $data]);
+        return $this->sendFrame($clientId, $message, 0x1);
+    }
+    
+    /**
+     * Send raw frame to client
+     */ (with duplicate protection)
+     */
+    public function join(string $clientId, string $room): void
+    {
+        if (!isset($this->clients[$clientId])) {
+            return;
+        }
+        
+        // Check if already in room
+        if (in_array($room, $this->clients[$clientId]['rooms'])) {
+            return; // Already joined
+        }
+        
+        if (!isset($this->rooms[$room])) {
+            $this->rooms[$room] = [];
+        }
+        
+        $this->rooms[$room][] = $clientId;
+        $this->clients[$clientId]['rooms'][] = $room;
+        $this->log("Client {$clientId} joined room: {$room}");c function broadcast(string $event, $data = null, ?string $excludeClientId = null): void
+    {
+        foreach (array_keys($this->clients) as $clientId) {
+            if ($clientId !== $excludeClientId) {
+                $this->send($clientId, $event, $data);
+            }
+        }
+    }
+    
+    /**
+     * Join a room
+     */
+    public function join(string $clientId, string $room): void
+    {
+        if (!isset($this->clients[$clientId])) {
+            return;
+        }
+        
+        if (!isset($this->rooms[$room])) {
+            $this->rooms[$room] = [];
+        }
+        
+        if (!in_array($clientId, $this->rooms[$room])) {
+            $this->rooms[$room][] = $clientId;
+            $this->clients[$clientId]['rooms'][] = $room;
+            $this->log("Client {$clientId} joined room: {$room}");
+        }
+    }
+    
+    /**
+     * Leave a room
+     */
+    public function leave(string $clientId, string $room): void
+    {
+        if (isset($this->rooms[$room])) {
+            $this->rooms[$room] = array_filter($this->rooms[$room], fn($id) => $id !== $clientId);
+            
+            if (empty($this->rooms[$room])) {
+                unset($this->rooms[$room]);
+            }
+        }
+        
+        if (isset($this->clients[$clientId])) {
+            $this->clients[$clientId]['rooms'] = array_filter(
+                $this->clients[$clientId]['rooms'],
+                fn($r) => $r !== $room
+            );
+        }
+        
+        $this->log("Client {$clientId} left room: {$room}");
+    }
+    
+    /**
+     * Broadcast to room
+     */
+    public function toRoom(string $room, string $event, $data = null, ?string $excludeClientId = null): void
+    {
+        if (!isset($this->rooms[$room])) {
+            return;
+        }
+        
+        foreach ($this->rooms[$room] as $clientId) {
+            if ($clientId !== $excludeClientId) {
+                $this->send($clientId, $event, $data);
+            }
+        }
+    }
+    
+    /**
+     * Register event handler
+     */
+    public function on(string $event, callable $handler): void
+    {
+        if (!isset($this->eventHandlers[$event])) {
+            $this->eventHandlers[$event] = [];
+        }
+        
+        $this->eventHandlers[$event][] = $handler;
+    }
+    
+    /**
+     * Emit event
+     */
+    private function emit(string $event, array $data = []): void
+    {
+        if (!isset($this->eventHandlers[$event])) {
+            return;
+        }
+        
+        foreach ($this->eventHandlers[$event] as $handler) {
+            call_user_func($handler, $data, $this);
+        }
+    }
+    
+    /**
+     * Handle incoming event from client
+     */
+    private function handleEvent(string $clientId, string $event, $data): void
+    {
+        $this->emit($event, [
+            'clientId' => $clientId,
+            'data' => $data
+        ]);
+    }
+    
+    /**
+     * Disconnect client
+     */
+    public function disconnect(string $clientId): void
+    {
+        if (!isset($this->clients[$clientId])) {
+        $socket = $this->clients[$clientId]['socket'];
+        $resourceId = (int)$socket;
+        
+        // Leave all rooms
+        foreach ($this->clients[$clientId]['rooms'] as $room) {
+            $this->leave($clientId, $room);
+        }
+        
+        // Close socket
+        \fclose($socket);
+        
+        // Remove from mapping
+        unset($this->socketToClientMap[$resourceId
+        
+        // Close socket
+        @\fclose($this->clients[$clientId]['socket']);
+        
+        // Remove client
+        unset($this->clients[$clientId]);
+        
+        $this->log("Client disconnected: {$clientId}");
+        $this->emit('disconnect', ['clientId' => $clientId]);
+    } (O(1) lookup)
+     */
+    private function getClientIdBySocket($socket): ?string
+    {
+        $resourceId = (int)$socket;
+        return $this->socketToClientMap[$resourceId] ?? null;
+    }
+    
+    /**
+     * Heartbeat mechanism: Send pings and check for timeouts
+     */
+    private function checkHeartbeat(): void
+    {
+        $now = microtime(true);
+        
+        // Send pings every $pingInterval seconds
+        if ($now - $this->lastPingTime >= $this->pingInterval) {
+            foreach ($this->clients as $clientId => $client) {
+                if ($client['handshake']) {
+                    $this->sendFrame($clientId, '', 0x9); // Send ping
+                }
+            }
+            $this->lastPingTime = $now;
+        }
+        
+        // Check for clients that haven't responded to ping
+        foreach ($this->clients as $clientId => $client) {
+            if (!$client['handshake']) continue;
+            
+            $timeSinceLastPong = $now - $client['lastPong'];
+            
+            if ($timeSinceLastPong > ($this->pingInterval + $this->pingTimeout)) {
+                $this->log("Client {$clientId} timed out (no pong for {$timeSinceLastPong}s)");
+                $this->disconnect($clientId);
+            }
+        }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Get all clients in a room
+     */
+    public function getClientsInRoom(string $room): array
+    {
+        return $this->rooms[$room] ?? [];
+    }
+    
+    /**
+     * Get all rooms a client is in
+     */
+    public function getClientRooms(string $clientId): array
+    {
+        return $this->clients[$clientId]['rooms'] ?? [];
+    }
+    
+    /**
+     * Get total connected clients
+     */
+    public function getClientCount(): int
+    {
+        return count($this->clients);
+    }
+    
+    /**
+     * Stop the server
+     */
+    public function stop(): void
+    {
+        $this->running = false;
+        
+        // Disconnect all clients
+        foreach (array_keys($this->clients) as $clientId) {
+            $this->disconnect($clientId);
+        }
+        
+        // Close server socket
+        if ($this->socket) {
+            \fclose($this->socket);
+        }
+        
+        $this->log("WebSocket server stopped");
+    }
+    
+    /**
+     * Log message
+     */
+    private function log(string $message): void
+    {
+        echo "[" . date('Y-m-d H:i:s') . "] {$message}\n";
+    }
+}

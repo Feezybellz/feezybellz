@@ -1,0 +1,215 @@
+<?php
+
+namespace Framework\Core\Mail;
+
+use Framework\Core\Mail\Drivers\LogDriver;
+use Framework\Core\Mail\Drivers\NativeDriver;
+use Framework\Core\Mail\Drivers\SmtpDriver;
+use Framework\Core\View;
+use Framework\Core\Mail\Mailable;
+
+/**
+ * @property string $host
+ * @property int    $port
+ * @property string $username
+ * @property string $password
+ * @property string $encryption
+ * @property string|array $to
+ * @property string|array $from
+ * @property string $subject
+ * @property string $view
+ * @property string $content    Raw email content
+ * @property bool   $isHtml     Whether the content is HTML (default true)
+ */
+class Mail
+{
+    protected $driverType;
+    protected $smtpConfig = [];
+    
+    protected $to = [];
+    protected $from = [];
+    
+    // Inline Email Properties
+    protected $subject = '';
+    protected $view = '';
+    protected $content = '';
+    protected $isHtml = true;
+    protected $viewData = [];
+    protected $attachments = [];
+
+    public function __construct()
+    {
+        $config = function_exists('config') ? config('mail') : [];
+        $this->driverType = $config['default'] ?? 'log';
+        $this->from = $config['from'] ?? ['address' => 'system@localhost', 'name' => 'System'];
+        $this->smtpConfig = $config['smtp'] ?? [];
+
+    }
+
+    // =========================================================
+    // MAGIC METHODS
+    // =========================================================
+
+    public function __set($name, $value)
+    {
+        $this->$name = $value;
+    }
+
+    public function __get($name)
+    {
+        return $this->$name ?? null;
+    }
+
+    // =========================================================
+    // FLUENT API
+    // =========================================================
+
+    public static function to($to): self
+    {
+        $instance = new static();
+        $instance->to = $to;
+        return $instance;
+    }
+
+    public function from($address, $name = null): self
+    {
+        $this->from = ['address' => $address, 'name' => $name];
+        return $this;
+    }
+
+    public function subject($subject): self
+    {
+        $this->subject = $subject;
+        return $this;
+    }
+
+    public function view($view, array $data = []): self
+    {
+        $this->view = $view;
+        $this->viewData = $data;
+        return $this;
+    }
+
+    public function html($content): self
+    {
+        $this->content = $content;
+        $this->isHtml = true;
+        return $this;
+    }
+
+    public function plain($content): self
+    {
+        $this->content = $content;
+        $this->isHtml = false;
+        return $this;
+    }
+
+    public function attach($path, array $options = []): self
+    {
+        $this->attachments[] = [
+            'path' => $path,
+            'name' => $options['as'] ?? basename($path),
+            'mime' => $options['mime'] ?? null
+        ];
+        return $this;
+    }
+
+    // = =========================================================
+    // EXECUTION
+    // =========================================================
+
+    /**
+     * Render the email content (populated with data)
+     * 
+     * @return string
+     */
+    public function render(): string
+    {
+        // 1. Prepare Body (Render view if exists)
+        $body = $this->content;
+        if (!empty($this->view)) {
+            $body = View::render($this->view, $this->viewData);
+        }
+        
+        return $body;
+    }
+
+    public function send($mailable = null): bool
+    {
+        if ($mailable instanceof Mailable) {
+            $mailable->build();
+            $this->subject = $mailable->subject;
+            $this->view = $mailable->view;
+            $this->viewData = $mailable->viewData;
+            $this->content = $mailable->content;
+            $this->isHtml = $mailable->isHtml;
+            $this->attachments = $mailable->attachments;
+            if (!empty($mailable->fromData)) {
+                $this->from = $mailable->fromData;
+            }
+        }
+
+        $driver = $this->resolveDriver();
+
+        // 1. Prepare Body
+        $body = $this->render();
+
+        // 2. Format Recipients
+        $to = $this->formatRecipients($this->to);
+        $from = $this->from;
+
+        // 3. Delegate to Driver
+        return $driver->send(
+            $to,
+            $this->subject,
+            $body,
+            ['From' => "{$from['name']} <{$from['address']}>"],
+            $this->attachments,
+            $this->isHtml
+        );
+    }
+
+    public function queue(): bool
+    {
+        // Integration with your Queue system
+        if (class_exists('\Framework\Core\Queue\QueueClient')) {
+            return \Framework\Core\Queue\QueueClient::dispatch([$this, 'send'], [])['success'];
+        }
+        return $this->send();
+    }
+
+    // =========================================================
+    // INTERNAL HELPERS
+    // =========================================================
+
+    protected function resolveDriver()
+    {
+        switch ($this->driverType) {
+            case 'smtp':
+                return new SmtpDriver($this->smtpConfig);
+            case 'native':
+                return new NativeDriver();
+            case 'log':
+            default:
+                return new LogDriver();
+        }
+    }
+
+    protected function formatRecipients($recipients): array
+    {
+        if (is_string($recipients)) {
+            return [$recipients];
+        }
+
+        $formatted = [];
+        foreach ($recipients as $key => $value) {
+            if (is_numeric($key)) {
+                $formatted[] = $value;
+            } else {
+                // If it's a 'name' => 'email' array
+                $formatted[] = $value;
+            }
+        }
+        return $formatted;
+    }
+}

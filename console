@@ -1,0 +1,20 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * Framework Console
+ * Custom CLI tool for migrations, scaffolding, and development server
+ */
+
+require __DIR__ . '/bootstrap/autoload.php';
+
+use Framework\Core\Application;
+use Framework\Core\Console\Console;
+
+// Initialize the Application with the base path
+// This sets the static $basePath property required by appPath()
+new Application(__DIR__);
+
+// Start the console application with the required arguments
+$console = new Console($argv);
+$console->run();

@@ -1,0 +1,24 @@
+{
+  "name": "framework/framework",
+  "description": "Native PHP Framework with zero dependencies",
+  "type": "project",
+  "require": {
+    "php": "^8.0",
+    "aws/aws-sdk-php": "^3.373"
+  },
+  "autoload": {
+    "psr-4": {
+      "Framework\\Core\\": "core/",
+      "App\\": "app/"
+    },
+    "files": [
+      "bootstrap/helpers.php"
+    ]
+  },
+  "minimum-stability": "stable",
+  "config": {
+    "platform": {
+      "php": "8.4"
+    }
+  }
+}
