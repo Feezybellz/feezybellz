@@ -54,12 +54,12 @@ class MakeMigrationCommand extends Command
      */
     protected function getTemplate(string $className): string
     {
-        \$tableName = strtolower(preg_replace('/(?<!^)[A-Z]/', '_\$0', \$className));
-        if (str_starts_with(\$tableName, 'create_')) {
-            \$tableName = substr(\$tableName, 7);
+        $tableName = strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $className));
+        if (str_starts_with($tableName, 'create_')) {
+            $tableName = substr($tableName, 7);
         }
-        if (str_ends_with(\$tableName, '_table')) {
-            \$tableName = substr(\$tableName, 0, -6);
+        if (str_ends_with($tableName, '_table')) {
+            $tableName = substr($tableName, 0, -6);
         }
 
         return <<<PHP
@@ -77,7 +77,7 @@ class {$className} extends Migration
      */
     public function up(): void
     {
-        \$this->createTable('{\$tableName}', function (Schema \$table) {
+        \$this->createTable('{$tableName}', function (Schema \$table) {
             \$table->id();
             // \$table->string('name');
             \$table->timestamps();
@@ -91,7 +91,7 @@ class {$className} extends Migration
      */
     public function down(): void
     {
-        \$this->dropTable('{\$tableName}');
+        \$this->dropTable('{$tableName}');
     }
 }
 
