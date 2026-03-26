@@ -1,0 +1,10 @@
+.env
+.env.*
+*.md
+storage/*
+storage/services/
+*.log
+!usage.md
+hidden/
+legal/
+vendor/
