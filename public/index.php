@@ -21,14 +21,6 @@ use Framework\Core\Events\Dispatcher;
 // 1. Initialize the DI Container / Application
 $app = new Application(dirname(__DIR__));
 
-// 2. Initialize database connections
-$dbConfig = config('db');
-if ($dbConfig && isset($dbConfig['connections'])) {
-    foreach ($dbConfig['connections'] as $name => $connection) {
-        DB::addConnection($name, $connection);
-    }
-}
-
 // 3. Create request object
 $request = new Request();
 

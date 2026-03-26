@@ -93,19 +93,14 @@ class View
         return $this->viewsPath . DIRECTORY_SEPARATOR . $path . '.php';
     }
     
+    protected function _exists(string $name): bool
+    {
+        $path = $this->_resolveViewPath($name);
+        return file_exists($path);
+    }
+
     protected function _path(string $name): string
     {
         return $this->_resolveViewPath($name);
-    }
-
-    /**
-     * Check if a view exists
-     * 
-     * @param string $name View name in dot notation
-     * @return bool
-     */
-    protected function _exists(string $name): bool
-    {
-        return file_exists($this->_resolveViewPath($name));
     }
 }

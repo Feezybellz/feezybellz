@@ -13,6 +13,15 @@ class Router
     protected static $request = null;
     protected static $response = null;
     protected static $container = null;
+    protected static $errorHandler = null;
+
+    /**
+     * Set a custom 404 error handler
+     */
+    public static function set404Handler(callable $callback): void
+    {
+        self::$errorHandler = $callback;
+    }
     
     /**
      * Set the dependency injection container.
@@ -460,6 +469,23 @@ class Router
         
         // 404 Not Found
         self::$response->setStatusCode(404);
+
+        // Check for a custom handler
+        if (self::$errorHandler) {
+            $result = (self::$errorHandler)(self::$request, self::$response);
+            if ($result instanceof Response) {
+                return $result;
+            }
+            if (is_string($result)) {
+                return self::$response->setContent($result);
+            }
+        }
+
+        // Check for an errors.404 view
+        if (class_exists('\Framework\Core\View') && \Framework\Core\View::exists('errors.404')) {
+            return self::$response->setContent(view('errors.404'));
+        }
+
         self::$response->setContent('404 Not Found');
         
         return self::$response;
