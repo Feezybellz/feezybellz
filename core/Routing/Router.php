@@ -558,6 +558,7 @@ class Router
         return strpos($host, $route->subdomain) === 0;
     }
     
+    
     /**
      * Match a route pattern against a URI
      * * @param string $pattern
@@ -566,8 +567,12 @@ class Router
      */
     protected static function matchRoute(string $pattern, string $uri)
     {
-        // Convert route pattern to regex
+        // Support custom regex in parameters: {name:regex}
+        $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*):(.+?)\}/', '(?P<$1>$2)', $pattern);
+        
+        // Convert standard route pattern to regex: {name}
         $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '(?P<$1>[^/]+)', $pattern);
+        
         $pattern = '#^' . $pattern . '$#';
         
         if (preg_match($pattern, $uri, $matches)) {
