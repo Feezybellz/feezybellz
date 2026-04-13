@@ -8,6 +8,11 @@ use Exception;
 class Container
 {
     /**
+     * The current globally available container (if any).
+     */
+    protected static $instance;
+
+    /**
      * The container's bindings.
      */
     protected $bindings = [];
@@ -16,6 +21,26 @@ class Container
      * The container's shared (singleton) instances.
      */
     protected $instances = [];
+
+    /**
+     * Get the globally available instance of the container.
+     */
+    public static function getInstance(): static
+    {
+        if (is_null(static::$instance)) {
+            static::$instance = new static;
+        }
+
+        return static::$instance;
+    }
+
+    /**
+     * Set the shared instance of the container.
+     */
+    public static function setInstance(Container $container = null): ?Container
+    {
+        return static::$instance = $container;
+    }
 
     /**
      * Register a binding with the container.
@@ -35,6 +60,16 @@ class Container
     public function singleton(string $abstract, $concrete = null): void
     {
         $this->bind($abstract, $concrete, true);
+    }
+
+    /**
+     * Register an existing instance as shared in the container.
+     */
+    public function instance(string $abstract, $instance): mixed
+    {
+        $this->instances[$abstract] = $instance;
+
+        return $instance;
     }
 
     /**

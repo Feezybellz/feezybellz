@@ -9,11 +9,20 @@ use Framework\Core\Container\Container;
 class Router
 {
     protected static $routes = [];
+    protected static $globalMiddleware = [];
     protected static $groupStack = [];
     protected static $request = null;
     protected static $response = null;
     protected static $container = null;
     protected static $errorHandler = null;
+
+    /**
+     * Register global middleware
+     */
+    public static function globalMiddleware(array $middleware): void
+    {
+        self::$globalMiddleware = array_merge(self::$globalMiddleware, $middleware);
+    }
 
     /**
      * Set a custom 404 error handler
@@ -451,9 +460,12 @@ class Router
                 };
 
                 // 3. Build the Middleware Pipeline
+                // We combine Global middleware with Route-specific middleware
+                $allMiddleware = array_merge(self::$globalMiddleware, $route->middleware);
+
                 // We reverse the middleware so they execute in the order they were defined
                 $pipeline = array_reduce(
-                    array_reverse($route->middleware),
+                    array_reverse($allMiddleware),
                     function ($next, $middleware) use ($params) {
                         return function ($request) use ($next, $middleware, $params) {
                             return self::runMiddleware($middleware, $params, $next);

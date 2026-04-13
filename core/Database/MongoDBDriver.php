@@ -14,6 +14,15 @@ class MongoDBDriver implements DatabaseDriverInterface
     protected $databaseName = null;
     protected $lastInsertedId = null;
     protected $session = null; // For transactions
+    protected $grammar = null;
+
+    public function getGrammar(): Grammar
+    {
+        if (!$this->grammar) {
+            $this->grammar = new MongoDBGrammar();
+        }
+        return $this->grammar;
+    }
 
 
     public function connect(array $config): void
@@ -75,11 +84,95 @@ class MongoDBDriver implements DatabaseDriverInterface
         }
     }
 
+    private function handleAggregateSelect(QueryBuilder $builder): array
+    {
+        $pipeline = [];
+
+        // 1. Match stage
+        $filter = $this->parseWhereToFilter($builder->where);
+        if (!empty($filter)) {
+            $pipeline[] = ['$match' => (object)$filter];
+        }
+
+        // 2. Lookup stages (Joins)
+        foreach ($builder->joins as $join) {
+            // Basic mapping of SQL join to MongoDB lookup
+            // Assumption: first is localField (table.col), second is foreignField (table.col)
+            // We need to strip the table prefix for MongoDB
+            $localField = str_contains($join['first'], '.') ? explode('.', $join['first'])[1] : $join['first'];
+            $foreignField = str_contains($join['second'], '.') ? explode('.', $join['second'])[1] : $join['second'];
+            
+            if ($localField === 'id') $localField = '_id';
+            if ($foreignField === 'id') $foreignField = '_id';
+
+            $pipeline[] = [
+                '$lookup' => [
+                    'from'         => $join['table'],
+                    'localField'   => $localField,
+                    'foreignField' => $foreignField,
+                    'as'           => "joined_{$join['table']}"
+                ]
+            ];
+
+            // For INNER/LEFT joins, we often want to unwind if it's a 1:1 relation
+            // To be safe and polyglot-friendly, we'll unwind but preserve nulls for LEFT JOIN
+            $preserveNulls = (strtoupper($join['type']) === 'LEFT');
+            $pipeline[] = [
+                '$unwind' => [
+                    'path' => "\$joined_{$join['table']}",
+                    'preserveNullAndEmptyArrays' => $preserveNulls
+                ]
+            ];
+        }
+
+        // 3. Sort stage
+        if (!empty($builder->orderBy)) {
+            $sort = [];
+            foreach ($builder->orderBy as $order) {
+                $sort[$order['column']] = strtolower($order['direction']) === 'desc' ? -1 : 1;
+            }
+            $pipeline[] = ['$sort' => $sort];
+        }
+
+        // 4. Limit/Skip
+        if ($builder->offset !== null) {
+            $pipeline[] = ['$skip' => $builder->offset];
+        }
+        if ($builder->limit !== null) {
+            $pipeline[] = ['$limit' => $builder->limit];
+        }
+
+        // 5. Projection
+        $projection = [];
+        if ($builder->select !== ['*']) {
+            foreach ($builder->select as $col) {
+                $projection[$col] = 1;
+            }
+        }
+        if (!empty($builder->unselect)) {
+            foreach ($builder->unselect as $col) {
+                $projection[$col] = 0;
+            }
+        }
+        if (!empty($projection)) {
+            $pipeline[] = ['$project' => $projection];
+        }
+
+        $result = $this->executeCommand([
+            'aggregate' => $builder->table,
+            'pipeline' => $pipeline,
+            'cursor' => new \stdClass,
+        ]);
+
+        return is_array($result) ? $result : iterator_to_array($result);
+    }
+
     private function handleSelect(QueryBuilder $builder, string $namespace): array
     {
         if (!empty($builder->joins)) {
-            error_log("MongoDB Driver: Joins are not supported and were ignored.");
+            return $this->handleAggregateSelect($builder);
         }
+        
         $filter = $this->parseWhereToFilter($builder->where);
 
         $options = [];
@@ -330,8 +423,12 @@ return iterator_to_array($cursor);
             } elseif ($op === 'IS NOT NULL') {
                 $filter[$col] = ['$ne' => null];
             } elseif ($op === 'BETWEEN' && is_array($val)) {
-                $filter[$col] = ['$gte' => $val[0], '$lte' => $val[1]];
+                $filter[$col] = [
+                    '$gte' => $this->getGrammar()->formatDate($val[0]), 
+                    '$lte' => $this->getGrammar()->formatDate($val[1])
+                ];
             } else {
+                $val = $this->getGrammar()->formatDate($val);
                 // Support multiple conditions on the same column
                 if (isset($filter[$col]) && is_array($filter[$col])) {
                     $filter[$col] = array_merge($filter[$col], [$mongoOp => $val]);
@@ -368,6 +465,10 @@ return iterator_to_array($cursor);
             $data['_id'] = $id;
         }
         
+        foreach ($data as $key => &$value) {
+            $value = $this->getGrammar()->formatDate($value);
+        }
+        
         $bulk->insert($data);
         $this->manager->executeBulkWrite($namespace, $bulk);
         
@@ -382,6 +483,14 @@ return iterator_to_array($cursor);
         
         if (isset($where['_id']) && is_string($where['_id'])) {
             $where['_id'] = new ObjectId($where['_id']);
+        }
+        
+        foreach ($data as $key => &$value) {
+            $value = $this->getGrammar()->formatDate($value);
+        }
+
+        foreach ($where as $key => &$value) {
+            $value = $this->getGrammar()->formatDate($value);
         }
         
         $bulk->update($where, ['$set' => $data], ['multi' => true]);
@@ -467,6 +576,11 @@ return iterator_to_array($cursor);
     }
 
     
+
+    public function alterStorage(Schema $schema): void
+    {
+        // MongoDB is schemaless, so altering storage (columns) is not needed.
+    }
 
     public function dropStorage(string $name): void
     {

@@ -5,6 +5,7 @@ namespace Framework\Core\Database;
 abstract class Model implements \JsonSerializable, \ArrayAccess
 {
     protected $db;
+    protected $connection = 'default';
     protected $table = '';
     protected $primaryKey = 'id';
     protected $fillable = [];
@@ -30,7 +31,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
     
     public function __construct(array $attributes = [])
     {
-        $this->db = DB::connection();
+        $this->db = DB::connection($this->connection);
         $this->fill($attributes);
     }
 
@@ -279,21 +280,21 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
                 $this->forceFill('updated_at', $now);
             }
             
-            $builder = static::table($this->table)->where($this->primaryKey, '=', $id);
+            $builder = static::table($this->table)->on($this->connection)->where($this->primaryKey, '=', $id);
             $builder->operation = 'update';
             $builder->data = $updateData;
-            return DB::connection()->executeBuilder($builder);
+            return DB::connection($this->connection)->executeBuilder($builder);
         } else {
             if ($this->timestamps) {
                 if (!isset($this->attributes['created_at'])) $this->forceFill('created_at', $now);
                 if (!isset($this->attributes['updated_at'])) $this->forceFill('updated_at', $now);
             }
             
-            $builder = static::table($this->table);
+            $builder = static::table($this->table)->on($this->connection);
             $builder->operation = 'insert';
             $builder->data = $this->attributes;
 
-            $id = DB::connection()->executeBuilder($builder); 
+            $id = DB::connection($this->connection)->executeBuilder($builder); 
             
             if ($id) {
                 $this->attributes[$this->primaryKey] = $id;
@@ -308,7 +309,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         if ($this->isChaining) {
             $builder = $this->buildQuery();
             $builder->operation = 'delete';
-            return DB::connection()->executeBuilder($builder);
+            return DB::connection($this->connection)->executeBuilder($builder);
         }
 
         if ($this->softDeletes) {
@@ -320,9 +321,9 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
 
     public function forceDelete()
     {
-        $builder = static::table($this->table)->where($this->primaryKey, '=', $this->attributes[$this->primaryKey]);
+        $builder = static::table($this->table)->on($this->connection)->where($this->primaryKey, '=', $this->attributes[$this->primaryKey]);
         $builder->operation = 'delete';
-        return DB::connection()->executeBuilder($builder);
+        return DB::connection($this->connection)->executeBuilder($builder);
     }
 
     public function restore(): bool
@@ -354,25 +355,15 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         $perPage = max(1, min(100, $perPage));
         $offset  = ($page - 1) * $perPage;
 
-        // Use one builder instance just for the count
-        $countBuilder = $this->buildQuery();
-        $total        = $countBuilder->count();
+        // Count total records without pagination constraints
+        $total = $this->buildQuery()->count();
 
-        // Build a FRESH query for the actual data fetch
-        $dataBuilder = $this->buildQuery();
-        $dataBuilder->limit($perPage)->offset($offset);
-
-        $models = [];
-        foreach ($dataBuilder->get() as $row) {
-            $attributes = is_object($row) ? (array) $row : $row;
-            if (isset($attributes['_id']) && !isset($attributes[$this->primaryKey])) {
-                $attributes[$this->primaryKey] = (string) $attributes['_id'];
-            }
-            $models[] = static::hydrate($attributes);
-        }
+        // Apply pagination to the model state and fetch
+        $this->_limit($perPage)->_offset($offset);
+        $data = $this->get();
 
         return [
-            'data'       => $this->loadRelations($models),
+            'data'       => $data,
             'pagination' => [
                 'current_page' => $page,
                 'per_page'     => $perPage,
@@ -408,7 +399,11 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
     }
 
     public static function all(): array { return static::query()->get(); }
-    public static function create(array $attributes): self { $instance = new static($attributes); $instance->save(); return $instance; }
+    public static function create(array $attributes): self { 
+        $instance = new static($attributes); 
+        $instance->save(); 
+        return $instance; 
+    }
     
     /**
      * Get the value of the primary key
@@ -612,8 +607,6 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
     public function get(): array
     {
         $builder = $this->buildQuery();
-        if ($this->queryLimit) $builder->limit($this->queryLimit);
-        if ($this->queryOffset) $builder->offset($this->queryOffset);
 
         $models = [];
         foreach ($builder->get() as $row) {
@@ -626,7 +619,11 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
 
     protected function buildQuery(): QueryBuilder
     {
-        $builder = (new QueryBuilder())->from($this->table)->select($this->querySelect);
+        $builder = (new QueryBuilder())->on($this->connection)->from($this->table)->select($this->querySelect);
+        
+        if ($this->queryLimit) $builder->limit($this->queryLimit);
+        if ($this->queryOffset) $builder->offset($this->queryOffset);
+
         foreach ($this->queryJoins as $j) {
             $builder->join($j['table'], $j['first'], $j['operator'], $j['second'], $j['type']);
         }

@@ -90,6 +90,11 @@ class Response
         return $this;
     }
 
+    public function header(string $key, string $value): self
+    {
+        return $this->_setHeader($key, $value);
+    }
+
     protected function _setContent(string $content): self
     {
         $this->content = $content;

@@ -8,6 +8,15 @@ use PDOException;
 class MySQLDriver implements DatabaseDriverInterface
 {
     protected $connection = null;
+    protected $grammar = null;
+
+    public function getGrammar(): Grammar
+    {
+        if (!$this->grammar) {
+            $this->grammar = new MySQLGrammar();
+        }
+        return $this->grammar;
+    }
     
     public function connect(array $config): void
     {
@@ -232,9 +241,9 @@ class MySQLDriver implements DatabaseDriverInterface
         
         $sql = "";
         foreach ($builder->joins as $join) {
-            $sql .= " {$join['type']} JOIN `{$join['table']}` ON " . 
-                    $this->wrapIdentifier($join['first']) . " {$join['operator']} " . 
-                    $this->wrapIdentifier($join['second']);
+            $sql .= " {$join['type']} JOIN " . $this->getGrammar()->wrap($join['table']) . " ON " . 
+                    $this->getGrammar()->wrap($join['first']) . " {$join['operator']} " . 
+                    $this->getGrammar()->wrap($join['second']);
         }
         return $sql;
     }
@@ -254,16 +263,18 @@ class MySQLDriver implements DatabaseDriverInterface
             }
 
             $operator = strtoupper($w['operator']);
-            $column = $this->wrapIdentifier($w['column']);
+            $column = $this->getGrammar()->wrap($w['column']);
             
             if ($operator === 'IN' || $operator === 'NOT IN') {
                 $placeholders = implode(', ', array_fill(0, count($w['value']), '?'));
                 $clauses[] = "{$boolean}{$column} {$operator} ({$placeholders})";
-                foreach ($w['value'] as $val) $params[] = $val;
+                foreach ($w['value'] as $val) {
+                    $params[] = $this->getGrammar()->formatDate($val);
+                }
             } elseif ($operator === 'BETWEEN') {
                 $clauses[] = "{$boolean}{$column} BETWEEN ? AND ?";
-                $params[] = $w['value'][0];
-                $params[] = $w['value'][1];
+                $params[] = $this->getGrammar()->formatDate($w['value'][0]);
+                $params[] = $this->getGrammar()->formatDate($w['value'][1]);
             } elseif ($operator === 'YEAR') {
                 $clauses[] = "{$boolean}YEAR({$column}) = ?";
                 $params[] = $w['value'];
@@ -275,7 +286,7 @@ class MySQLDriver implements DatabaseDriverInterface
                 $params[] = $w['value'];
             } else {
                 $clauses[] = "{$boolean}{$column} {$operator} ?";
-                $params[] = $w['value'];
+                $params[] = $this->getGrammar()->formatDate($w['value']);
             }
         }
         return " WHERE " . implode('', $clauses);
@@ -302,20 +313,20 @@ class MySQLDriver implements DatabaseDriverInterface
             
             // Handle Aliases: "table.column as alias" or "column as alias" or "column alias"
             if (preg_match('/^(.+?)\s+(?:as\s+)?(\w+)$/i', $col, $matches)) {
-                return $this->wrapIdentifier($matches[1]) . " AS `{$matches[2]}`";
+                return $this->getGrammar()->wrap($matches[1]) . " AS `{$matches[2]}`";
             }
 
-            return $this->wrapIdentifier($col);
+            return $this->getGrammar()->wrap($col);
         }, $select);
 
-        $sql = "SELECT " . implode(', ', $formattedSelect) . " FROM `{$builder->table}` ";
+        $sql = "SELECT " . implode(', ', $formattedSelect) . " FROM " . $this->getGrammar()->wrap($builder->table) . " ";
         $sql .= $this->compileJoins($builder);
         $params = [];
         $sql .= $this->compileWhere($builder, $params);
 
         if (!empty($builder->orderBy)) {
             $orders = array_map(function($o) {
-                return $this->wrapIdentifier($o['column']) . " {$o['direction']}";
+                return $this->getGrammar()->wrap($o['column']) . " {$o['direction']}";
             }, $builder->orderBy);
             $sql .= " ORDER BY " . implode(', ', $orders);
         }
@@ -334,29 +345,13 @@ class MySQLDriver implements DatabaseDriverInterface
         return $this->query($sql, $params)->fetchAll(\PDO::FETCH_ASSOC);
     }
 
-    private function wrapIdentifier(string $column): string
-    {
-        $column = trim($column);
-        if ($column === '*' || strpos($column, '(') !== false || strpos($column, '`') !== false) {
-            return $column;
-        }
-
-        if (strpos($column, '.') !== false) {
-            $parts = explode('.', $column);
-            $table = trim($parts[0]);
-            $col = trim($parts[1]);
-            return $col === '*' ? "`{$table}`.*" : "`{$table}`.`{$col}`";
-        }
-
-        return "`{$column}`";
-    }
-
     public function insert(string $table, array $data)
     {
         $columns = implode('`, `', array_keys($data));
         $placeholders = implode(', ', array_fill(0, count($data), '?'));
-        $sql = "INSERT INTO `{$table}` (`{$columns}`) VALUES ({$placeholders})";
-        return $this->query($sql, array_values($data));
+        $sql = "INSERT INTO " . $this->getGrammar()->wrap($table) . " (`{$columns}`) VALUES ({$placeholders})";
+        $formattedValues = array_map([$this->getGrammar(), 'formatDate'], array_values($data));
+        return $this->query($sql, $formattedValues);
     }
 
     public function update(string $table, array $data, array $where)
@@ -365,14 +360,14 @@ class MySQLDriver implements DatabaseDriverInterface
         $params = [];
         foreach ($data as $key => $value) {
             $set[] = "`{$key}` = ?";
-            $params[] = $value;
+            $params[] = $this->getGrammar()->formatDate($value);
         }
         $whereClause = [];
         foreach ($where as $key => $value) {
             $whereClause[] = "`{$key}` = ?";
-            $params[] = $value;
+            $params[] = $this->getGrammar()->formatDate($value);
         }
-        $sql = "UPDATE `{$table}` SET " . implode(', ', $set) . " WHERE " . implode(' AND ', $whereClause);
+        $sql = "UPDATE " . $this->getGrammar()->wrap($table) . " SET " . implode(', ', $set) . " WHERE " . implode(' AND ', $whereClause);
         return $this->query($sql, $params);
     }
 
@@ -384,7 +379,7 @@ class MySQLDriver implements DatabaseDriverInterface
             $whereClause[] = "`{$key}` = ?";
             $params[] = $value;
         }
-        $sql = "DELETE FROM `{$table}` WHERE " . implode(' AND ', $whereClause);
+        $sql = "DELETE FROM " . $this->getGrammar()->wrap($table) . " WHERE " . implode(' AND ', $whereClause);
         return $this->query($sql, $params);
     }
 

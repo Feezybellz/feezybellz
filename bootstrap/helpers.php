@@ -565,4 +565,25 @@ if (!function_exists('recursive_format_dates')) {
     }
 }
 
+if (!function_exists('session')) {
+    /**
+     * Get the session service or a session value
+     * 
+     * @param string|null $key
+     * @param mixed $default
+     * @return \Framework\Core\Http\Session|mixed
+     */
+    function session(?string $key = null, $default = null)
+    {
+        $session = \Framework\Core\Container\Container::getInstance()->make(\Framework\Core\Http\Session::class);
+        
+        if ($key === null) {
+            return $session;
+        }
+        
+        return $session->get($key, $default);
+    }
+}
+
+
 

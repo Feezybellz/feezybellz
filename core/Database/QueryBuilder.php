@@ -4,6 +4,7 @@ namespace Framework\Core\Database;
 
 class QueryBuilder
 {
+    public $connection = 'default';
     public $table;
     public $select = ['*'];
     public $unselect = [];
@@ -19,6 +20,15 @@ class QueryBuilder
     public $aggregateColumn = null;
     public $uniqueBy = [];
     public $lockForUpdate = false;
+
+    /**
+     * Set the database connection to use
+     */
+    public function on(string $connection): self
+    {
+        $this->connection = $connection;
+        return $this;
+    }
 
     public function from(string $table): self
     {
@@ -133,13 +143,13 @@ class QueryBuilder
 
     public function get(): array
     {
-        $result = DB::connection()->executeBuilder($this);
+        $result = DB::connection($this->connection)->executeBuilder($this);
         return is_array($result) ? $result : [];
     }
 
     public function execute()
     {
-        return DB::connection()->executeBuilder($this);
+        return DB::connection($this->connection)->executeBuilder($this);
     }
 
     public function first()
@@ -152,41 +162,41 @@ class QueryBuilder
     public function count(): int
     {
         $this->operation = 'count';
-        return DB::connection()->executeBuilder($this);
+        return DB::connection($this->connection)->executeBuilder($this);
     }
 
     public function sum(string $column): float
     {
         $this->operation = 'sum';
         $this->aggregateColumn = $column;
-        return (float)DB::connection()->executeBuilder($this);
+        return (float)DB::connection($this->connection)->executeBuilder($this);
     }
 
     public function avg(string $column): float
     {
         $this->operation = 'avg';
         $this->aggregateColumn = $column;
-        return (float)DB::connection()->executeBuilder($this);
+        return (float)DB::connection($this->connection)->executeBuilder($this);
     }
 
     public function insert(array $data)
     {
         $this->operation = 'insert';
         $this->data = $data;
-        return DB::connection()->executeBuilder($this);
+        return DB::connection($this->connection)->executeBuilder($this);
     }
 
     public function update(array $data): int
     {
         $this->operation = 'update';
         $this->data = $data;
-        return (int)DB::connection()->executeBuilder($this);
+        return (int)DB::connection($this->connection)->executeBuilder($this);
     }
 
     public function delete(): int
     {
         $this->operation = 'delete';
-        return (int)DB::connection()->executeBuilder($this);
+        return (int)DB::connection($this->connection)->executeBuilder($this);
     }
 
     public function exists(): bool

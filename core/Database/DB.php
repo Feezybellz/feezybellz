@@ -63,6 +63,25 @@ class DB
             case 'mongodb':
             case 'mongo':
                 return new MongoDBDriver();
+            case 'null':
+                return new class implements DatabaseDriverInterface {
+                    public function connect(array $config): void {}
+                    public function query(string $query, array $params = []) { return new \stdClass(); }
+                    public function executeBuilder(QueryBuilder $builder) { return []; }
+                    public function insert(string $table, array $data) { return 1; }
+                    public function update(string $table, array $data, array $where) { return 1; }
+                    public function delete(string $table, array $where) { return 1; }
+                    public function lastInsertId() { return 1; }
+                    public function isConnected(): bool { return true; }
+                    public function createStorage(Schema $schema): void {}
+                    public function alterStorage(Schema $schema): void {}
+                    public function dropStorage(string $name): void {}
+                    public function ensureMigrationTracking(string $tableName): void {}
+                    public function beginTransaction(): void {}
+                    public function commit(): void {}
+                    public function rollBack(): void {}
+                    public function getGrammar(): Grammar { return new MySQLGrammar(); }
+                };
             default:
                 throw new \Exception("Unsupported database driver: {$type}");
         }
