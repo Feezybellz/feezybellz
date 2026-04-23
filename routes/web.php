@@ -28,3 +28,7 @@ Router::get('/db-test', function(Request $request, Response $response) {
         ]);
     }
 });
+
+Router::get('/smtp-tester', [\App\Controllers\SmtpTesterController::class, 'index']);
+Router::post('/smtp-tester', [\App\Controllers\SmtpTesterController::class, 'index']);
+

@@ -9,10 +9,24 @@ class SmtpDriver implements MailDriverInterface
 {
     private $config;
     private $socket;
+    private $logs = [];
 
     public function __construct(array $config)
     {
         $this->config = $config;
+    }
+
+    public function getLogs(): array
+    {
+        return $this->logs;
+    }
+
+    private function log(string $message): void
+    {
+        $this->logs[] = [
+            'timestamp' => date('Y-m-d H:i:s'),
+            'message' => $message
+        ];
     }
 
     public function send($to, string $subject, string $body, array $headers = [], array $attachments = [], bool $isHtml = true): bool
@@ -21,17 +35,25 @@ class SmtpDriver implements MailDriverInterface
         $port = $this->config['port'] ?? 2525;
         $encryption = $this->config['encryption'] ?? '';
 
+        $this->log("Connecting to $host:$port (Encryption: $encryption)");
+
         if ($encryption === 'ssl') $host = 'ssl://' . $host;
 
-        $this->socket = fsockopen($host, $port, $errno, $errstr, 15);
-        if (!$this->socket) throw new Exception("SMTP Error: $errstr ($errno)");
+        $this->socket = @fsockopen($host, $port, $errno, $errstr, 15);
+        if (!$this->socket) {
+            $this->log("Connection failed: $errstr ($errno)");
+            throw new Exception("SMTP Error: $errstr ($errno)");
+        }
 
         $this->readResponse(); 
         $this->sendCommand("EHLO " . gethostname(), 250);
 
         if ($encryption === 'tls') {
             $this->sendCommand("STARTTLS", 220);
-            stream_socket_enable_crypto($this->socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+            if (!stream_socket_enable_crypto($this->socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+                $this->log("TLS encryption failed");
+                throw new Exception("SMTP Error: Failed to enable TLS encryption");
+            }
             $this->sendCommand("EHLO " . gethostname(), 250);
         }
 
@@ -57,11 +79,13 @@ class SmtpDriver implements MailDriverInterface
         // Pass $isHtml to the payload builder
         $payload = $this->buildMultipartPayload($subject, implode(', ', $recipients), $headers, $body, $attachments, $isHtml);
 
+        $this->log("Sending data...");
         fwrite($this->socket, $payload . "\r\n.\r\n");
         $this->readResponse(250);
 
         $this->sendCommand("QUIT", 221);
         fclose($this->socket);
+        $this->log("Connection closed.");
 
         return true;
     }
@@ -98,6 +122,7 @@ class SmtpDriver implements MailDriverInterface
     }
 
     private function sendCommand(string $cmd, int $code): void {
+        $this->log("> " . $cmd);
         fwrite($this->socket, $cmd . "\r\n");
         $this->readResponse($code);
     }
@@ -108,7 +133,9 @@ class SmtpDriver implements MailDriverInterface
             $response .= $line;
             if (substr($line, 3, 1) === ' ') break;
         }
+        $this->log("< " . trim($response));
         if ($code && (int)substr($response, 0, 3) !== $code) {
+            $this->log("Error: Expected $code, got $response");
             throw new Exception("SMTP Error: Expected $code, got $response");
         }
         return $response;

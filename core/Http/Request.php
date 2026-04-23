@@ -51,6 +51,17 @@ class Request
     {
         return $this->method;
     }
+
+    /**
+     * Check the request method
+     * 
+     * @param string $method
+     * @return bool
+     */
+    public function isMethod(string $method): bool
+    {
+        return strtoupper($this->method) === strtoupper($method);
+    }
     
     /**
      * Get the request URI

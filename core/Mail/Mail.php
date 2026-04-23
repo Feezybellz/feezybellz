@@ -25,6 +25,7 @@ class Mail
 {
     protected $driverType;
     protected $smtpConfig = [];
+    protected $driverInstance = null;
     
     protected $to = [];
     protected $from = [];
@@ -43,7 +44,6 @@ class Mail
         $this->driverType = $config['default'] ?? 'log';
         $this->from = $config['from'] ?? ['address' => 'system@localhost', 'name' => 'System'];
         $this->smtpConfig = $config['smtp'] ?? [];
-
     }
 
     // =========================================================
@@ -75,6 +75,27 @@ class Mail
     {
         $this->from = ['address' => $address, 'name' => $name];
         return $this;
+    }
+
+    public function driver(string $type): self
+    {
+        $this->driverType = $type;
+        return $this;
+    }
+
+    public function smtpConfig(array $config): self
+    {
+        $this->smtpConfig = $config;
+        $this->driverType = 'smtp';
+        return $this;
+    }
+
+    public function getDriverLogs(): array
+    {
+        if ($this->driverInstance && method_exists($this->driverInstance, 'getLogs')) {
+            return $this->driverInstance->getLogs();
+        }
+        return [];
     }
 
     public function subject($subject): self
@@ -149,7 +170,7 @@ class Mail
             }
         }
 
-        $driver = $this->resolveDriver();
+        $this->driverInstance = $this->resolveDriver();
 
         // 1. Prepare Body
         $body = $this->render();
@@ -159,7 +180,7 @@ class Mail
         $from = $this->from;
 
         // 3. Delegate to Driver
-        return $driver->send(
+        return $this->driverInstance->send(
             $to,
             $this->subject,
             $body,
@@ -188,10 +209,10 @@ class Mail
             case 'smtp':
                 return new SmtpDriver($this->smtpConfig);
             case 'native':
-                return new NativeDriver();
+                return new \Framework\Core\Mail\Drivers\NativeDriver();
             case 'log':
             default:
-                return new LogDriver();
+                return new \Framework\Core\Mail\Drivers\LogDriver();
         }
     }
 

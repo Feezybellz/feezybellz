@@ -122,6 +122,11 @@ class Response
         return $this;
     }
 
+    protected function _view(string $name, array $data = [], int $statusCode = null): self
+    {
+        return $this->_html(view($name, $data), $statusCode);
+    }
+
     protected function _redirect(string $url, int $statusCode = 302): self
     {
         $this->_setStatusCode($statusCode);
