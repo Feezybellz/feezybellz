@@ -282,8 +282,10 @@ class MySQLDriver implements DatabaseDriverInterface
                 $clauses[] = "{$boolean}MONTH({$column}) = ?";
                 $params[] = $w['value'];
             } elseif ($operator === 'DATE') {
-                $clauses[] = "{$boolean}DATE({$column}) = ?";
+                $clauses[] = "{$boolean}{$column} = ?";
                 $params[] = $w['value'];
+            } elseif (in_array($operator, ['IS NULL', 'IS NOT NULL'])) {
+                $clauses[] = "{$boolean}{$column} {$operator}";
             } else {
                 $clauses[] = "{$boolean}{$column} {$operator} ?";
                 $params[] = $this->getGrammar()->formatDate($w['value']);

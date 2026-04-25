@@ -37,6 +37,7 @@ class Mail
     protected $isHtml = true;
     protected $viewData = [];
     protected $attachments = [];
+    protected $debug = false;
 
     public function __construct()
     {
@@ -44,6 +45,7 @@ class Mail
         $this->driverType = $config['default'] ?? 'log';
         $this->from = $config['from'] ?? ['address' => 'system@localhost', 'name' => 'System'];
         $this->smtpConfig = $config['smtp'] ?? [];
+        $this->debug = $config['debug'] ?? false;
     }
 
     // =========================================================
@@ -74,6 +76,12 @@ class Mail
     public function from($address, $name = null): self
     {
         $this->from = ['address' => $address, 'name' => $name];
+        return $this;
+    }
+
+    public function debug(bool $value = true): self
+    {
+        $this->debug = $value;
         return $this;
     }
 
@@ -180,14 +188,22 @@ class Mail
         $from = $this->from;
 
         // 3. Delegate to Driver
-        return $this->driverInstance->send(
-            $to,
-            $this->subject,
-            $body,
-            ['From' => "{$from['name']} <{$from['address']}>"],
-            $this->attachments,
-            $this->isHtml
-        );
+        try {
+            return $this->driverInstance->send(
+                $to,
+                $this->subject,
+                $body,
+                ['From' => "{$from['name']} <{$from['address']}>"],
+                $this->attachments,
+                $this->isHtml
+            );
+        } catch (\Exception $e) {
+            if ($this->debug) {
+                throw $e;
+            }
+            error_log("Mail Error: " . $e->getMessage());
+            return false;
+        }
     }
 
     public function queue(): bool

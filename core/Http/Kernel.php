@@ -16,6 +16,7 @@ class Kernel
      */
     protected array $middleware = [
         \App\Middleware\DatabaseManager::class,
+        \App\Middleware\TenantMiddleware::class,
     ];
 
     public function __construct(Application $app)

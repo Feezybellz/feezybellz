@@ -158,6 +158,14 @@ class Request
         return null;
     }
     
+    public function server($key = null, $default = null){
+        if ($key === null) {
+            return $this->server;
+        }
+        
+        return $this->server[$key] ?? $default;
+    }
+
     /**
      * Get a header
      * 
@@ -251,6 +259,22 @@ class Request
         return $this->isAjax() || 
             strpos($acceptable, '/json') !== false || 
             strpos($acceptable, '+json') !== false;
+    }
+
+    /**
+     * Get a cookie value
+     * 
+     * @param string|null $key
+     * @param mixed $default
+     * @return mixed
+     */
+    public function cookie($key = null, $default = null)
+    {
+        if ($key === null) {
+            return $_COOKIE;
+        }
+        
+        return $_COOKIE[$key] ?? $default;
     }
 
     /**

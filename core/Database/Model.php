@@ -4,7 +4,6 @@ namespace Framework\Core\Database;
 
 abstract class Model implements \JsonSerializable, \ArrayAccess
 {
-    protected $db;
     protected $connection = 'default';
     protected $table = '';
     protected $primaryKey = 'id';
@@ -14,6 +13,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
     protected $attributes = [];
     protected $timestamps = true;
     protected $softDeletes = false;
+    public $exists = false;
     
     protected $queryWhere = [];
     protected $querySelect = ['*'];
@@ -31,8 +31,24 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
     
     public function __construct(array $attributes = [])
     {
-        $this->db = DB::connection($this->connection);
         $this->fill($attributes);
+    }
+
+    /**
+     * Set the database connection for the model instance
+     */
+    public function setConnection(string $name): self
+    {
+        $this->connection = $name;
+        return $this;
+    }
+
+    /**
+     * Fluent method to switch connection (Internal)
+     */
+    protected function _on(string $connection): self
+    {
+        return $this->setConnection($connection);
     }
 
     // =========================================================
@@ -270,7 +286,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
     {
         $now = date('Y-m-d H:i:s');
         
-        if (isset($this->attributes[$this->primaryKey])) {
+        if ($this->exists) {
             $id = $this->attributes[$this->primaryKey];
             $updateData = $this->attributes;
             unset($updateData[$this->primaryKey]);
@@ -296,9 +312,12 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
 
             $id = DB::connection($this->connection)->executeBuilder($builder); 
             
-            if ($id) {
-                $this->attributes[$this->primaryKey] = $id;
-                return $id; 
+            if ($id !== false) {
+                if (!isset($this->attributes[$this->primaryKey])) {
+                    $this->attributes[$this->primaryKey] = $id;
+                }
+                $this->exists = true;
+                return $this->attributes[$this->primaryKey]; 
             }
             return false;
         }
@@ -334,6 +353,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
     }
 
     public function count(): int { return $this->buildQuery()->count(); }
+    public function _count(): int { return $this->count(); }
     protected function _exists($id = null): bool
     {
         if ($id !== null) {
@@ -342,6 +362,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         return $this->buildQuery()->exists();
     }
     public function sum(string $column): float { return $this->buildQuery()->sum($column); }
+    public function _sum(string $column): float { return $this->sum($column); }
 
     public function first(): ?self 
     {  
@@ -360,10 +381,19 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
 
         // Apply pagination to the model state and fetch
         $this->_limit($perPage)->_offset($offset);
-        $data = $this->get();
+        
+        $builder = $this->buildQuery();
+        $models = [];
+        foreach ($builder->get() as $row) {
+            $attributes = is_object($row) ? (array) $row : $row;
+            if (isset($attributes['_id']) && !isset($attributes[$this->primaryKey])) {
+                $attributes[$this->primaryKey] = (string) $attributes['_id'];
+            }
+            $models[] = static::hydrate($attributes, $this->connection);
+        }
 
         return [
-            'data'       => $data,
+            'data'       => $this->loadRelations($models),
             'pagination' => [
                 'current_page' => $page,
                 'per_page'     => $perPage,
@@ -612,7 +642,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         foreach ($builder->get() as $row) {
             $attributes = is_object($row) ? (array) $row : $row;
             if (isset($attributes['_id'])) $attributes[$this->primaryKey] = (string) $attributes['_id'];
-            $models[] = static::hydrate($attributes);
+            $models[] = static::hydrate($attributes, $this->connection);
         }
         return $this->loadRelations($models);
     }
@@ -643,10 +673,12 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         return $builder;
     }
 
-    protected static function hydrate($attributes): self
+    protected static function hydrate($attributes, string $connection = 'default'): self
     {
         $instance = new static();
+        $instance->setConnection($connection);
         foreach ((array)$attributes as $k => $v) $instance->forceFill($k, $v);
+        $instance->exists = true;
         return $instance;
     }
 

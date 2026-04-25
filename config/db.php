@@ -11,23 +11,28 @@ return [
         'default' => [
             'driver'   => env('DB_CONNECTION', 'mysql'),
             
-            // Priority 1: Use a full connection URI if provided
-            'uri'      => env('MONGO_URI') ?: env('DB_URI'),
-            
-            // Priority 2: Fallback to individual keys
-            'host'     => env('MONGO_HOST') ?: env('DB_HOST') ?: 'localhost',
-            'port'     => env('MONGO_PORT') ?: env('DB_PORT') ?: (env('DB_CONNECTION') === 'mongodb' ? 27017 : 3306),
-            'database' => env('MONGO_DATABASE') ?: env('DB_DATABASE') ?: 'framework',
-            'username' => env('MONGO_USERNAME') ?: env('DB_USERNAME') ?: '',
-            'password' => env('MONGO_PASSWORD') ?: env('DB_PASSWORD') ?: '',
+            'host'     => env('DB_HOST', '127.0.0.1'),
+            'port'     => env('DB_PORT', 3306),
+            'database' => env('DB_DATABASE', 'framework'),
+            'username' => env('DB_USERNAME', 'root'),
+            'password' => env('DB_PASSWORD', ''),
             'charset'  => env('DB_CHARSET', 'utf8mb4'),
+        ],
+        'mongodb' => [
+            'driver'   => 'mongodb',
+            'uri'      => env('MONGO_URI'),
+            'host'     => env('MONGO_HOST', '127.0.0.1'),
+            'port'     => env('MONGO_PORT', 27017),
+            'database' => env('MONGO_DATABASE', 'framework'),
+            'username' => env('MONGO_USERNAME', ''),
+            'password' => env('MONGO_PASSWORD', ''),
             'options'  => [
                 'authSource' => env('MONGO_AUTH_SOURCE', 'admin'),
             ],
         ],
     ],
     // Static Tenants: Hardcoded connections (Overrides DB lookup)
-    'static_tenants' => [
+    'tenants' => [
         'admin' => [
             'driver'   => 'mysql',
             'host'     => '127.0.0.1',

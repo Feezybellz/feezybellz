@@ -32,3 +32,8 @@ Router::get('/db-test', function(Request $request, Response $response) {
 Router::get('/smtp-tester', [\App\Controllers\SmtpTesterController::class, 'index']);
 Router::post('/smtp-tester', [\App\Controllers\SmtpTesterController::class, 'index']);
 
+Router::get('/tester', [\App\Controllers\TesterController::class, 'index']);
+Router::any('/tester/handle', [\App\Controllers\TesterController::class, 'handle']);
+
+Router::get('/tenant-test', [\App\Controllers\TenantTestController::class, 'index']);
+
