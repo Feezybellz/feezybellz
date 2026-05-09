@@ -81,14 +81,33 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
     // STRUCTURED QUERY METHODS (Internal Prefixed)
     // =========================================================
 
-    protected function _where(string $column, $operator, $value = null, string $boolean = 'AND'): self
+    protected function _where($column, $operator = null, $value = null, string $boolean = 'AND'): self
     {
-        // Internal methods are called via __call with $parameters array.
-        // We can't use func_num_args() directly here because it refers to the 
-        // arguments of _where, which always sees at least 2 due to the signature.
-        // However, since we use ...$parameters in __call, we might need a better way.
-        
         $this->isChaining = true;
+
+        if ($column instanceof \Closure) {
+            $nestedModel = new static();
+            $nestedModel->isChaining = true;
+            $column($nestedModel);
+            
+            $this->queryWhere[] = [
+                'type' => 'nested',
+                'query' => function($builder) use ($nestedModel) {
+                    foreach ($nestedModel->queryWhere as $w) {
+                        if (isset($w['type']) && $w['type'] === 'raw') {
+                            $builder->whereRaw($w['sql'], $w['params'], $w['boolean']);
+                        } elseif (isset($w['type']) && $w['type'] === 'nested') {
+                             $builder->where($w['query'], null, null, $w['boolean']);
+                        } else {
+                            $builder->where($w['column'], $w['operator'], $w['value'], $w['boolean']);
+                        }
+                    }
+                },
+                'boolean' => $boolean
+            ];
+            return $this;
+        }
+        
         $this->queryWhere[] = [
             'column' => static::sanitizeColumn($column),
             'operator' => strtoupper($operator),
@@ -165,7 +184,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         return $this;
     }
 
-    protected function _orWhere(string $column, $operator, $value = null): self
+    protected function _orWhere($column, $operator = null, $value = null): self
     {
         return $this->_where($column, $operator, $value, 'OR');
     }
@@ -660,6 +679,8 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         foreach ($this->queryWhere as $w) {
             if (isset($w['type']) && $w['type'] === 'raw') {
                 $builder->whereRaw($w['sql'], $w['params'], $w['boolean']);
+            } elseif (isset($w['type']) && $w['type'] === 'nested') {
+                $builder->where($w['query'], null, null, $w['boolean']);
             } else {
                 $builder->where($w['column'], $w['operator'], $w['value'], $w['boolean']);
             }

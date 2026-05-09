@@ -336,104 +336,95 @@ return iterator_to_array($cursor);
         if (empty($whereClauses)) return [];
         
         $filter = [];
-        foreach ($whereClauses as $w) {
-            if (isset($w['type']) && $w['type'] === 'raw') {
+        
+        foreach ($whereClauses as $i => $w) {
+            $clause = [];
+            
+            if (isset($w['type']) && $w['type'] === 'nested') {
+                $nestedBuilder = new QueryBuilder();
+                $w['query']($nestedBuilder);
+                $clause = $this->parseWhereToFilter($nestedBuilder->where);
+            } elseif (isset($w['type']) && $w['type'] === 'raw') {
                 error_log("MongoDB Driver: whereRaw is not fully supported and was ignored: " . $w['sql']);
                 continue;
-            }
-
-            $op = strtoupper($w['operator'] ?? '=');
-            $col = $w['column'];
-            $val = $w['value'];
-            
-            // POLYGLOT FIX: Map 'id' to '_id' for MongoDB
-            if ($col === 'id') { $col = '_id'; }
-
-            // Convert 24-char strings to ObjectId for _id OR any foreign key ending in _id
-            $is_id_column = ($col === '_id' || (strlen($col) >= 3 && substr($col, -3) === '_id'));
-            if ($is_id_column && is_string($val) && strlen($val) === 24) {
-                try {
-                    $val = new \MongoDB\BSON\ObjectId($val);
-                } catch (\Exception $e) { /* keep as string */ }
-            }
-            
-            // --- CUSTOM ENGINE OPERATORS (DATE, YEAR, MONTH) ---
-            if ($op === 'DATE') {
-                // Converts "YYYY-MM-DD" to a range matching the whole day in a timestamp string
-                $filter[$col] = [
-                    '$gte' => $val . ' 00:00:00',
-                    '$lte' => $val . ' 23:59:59'
-                ];
-                continue; // Prevent standard operator match
-            } 
-            
-            if ($op === 'YEAR') {
-                // Matches "YYYY-..." at the start of the string
-                $filter[$col] = ['$regex' => '^' . $val . '-', '$options' => 'i'];
-                continue;
-            } 
-            
-            if ($op === 'MONTH') {
-                // Matches "-MM-" segment in timestamp strings (e.g., -02-)
-                $month = str_pad((string)$val, 2, '0', STR_PAD_LEFT);
-                $filter[$col] = ['$regex' => '-' . $month . '-', '$options' => 'i'];
-                continue;
-            }
-
-            // --- STANDARD OPERATORS ---
-            switch ($op) {
-                case '=':
-                    $mongoOp = '$eq';
-                    break;
-                case '>':
-                    $mongoOp = '$gt';
-                    break;
-                case '<':
-                    $mongoOp = '$lt';
-                    break;
-                case '>=':
-                    $mongoOp = '$gte';
-                    break;
-                case '<=':
-                    $mongoOp = '$lte';
-                    break;
-                case '!=':
-                    $mongoOp = '$ne';
-                    break;
-                case 'IN':
-                    $mongoOp = '$in';
-                    break;
-                case 'NOT IN':
-                    $mongoOp = '$nin';
-                    break;
-                case 'LIKE':
-                    $mongoOp = '$regex';
-                    break;
-                default:
-                    $mongoOp = '$eq';
-            }
-
-            // SAFETY GUARD FOR $in
-            if (($op === 'IN' || $op === 'NOT IN') && !is_array($val)) {
-                $val = [$val]; // Wrap in array to prevent MongoDB driver crash
-            } elseif ($op === 'LIKE') {
-                $filter[$col] = ['$regex' => str_replace('%', '', $val), '$options' => 'i'];
-            } elseif ($op === 'IS NULL') {
-                $filter[$col] = null;
-            } elseif ($op === 'IS NOT NULL') {
-                $filter[$col] = ['$ne' => null];
-            } elseif ($op === 'BETWEEN' && is_array($val)) {
-                $filter[$col] = [
-                    '$gte' => $this->getGrammar()->formatDate($val[0]), 
-                    '$lte' => $this->getGrammar()->formatDate($val[1])
-                ];
             } else {
-                $val = $this->getGrammar()->formatDate($val);
-                // Support multiple conditions on the same column
-                if (isset($filter[$col]) && is_array($filter[$col])) {
-                    $filter[$col] = array_merge($filter[$col], [$mongoOp => $val]);
+                $op = strtoupper($w['operator'] ?? '=');
+                $col = $w['column'];
+                $val = $w['value'];
+                
+                // POLYGLOT FIX: Map 'id' to '_id' for MongoDB
+                if ($col === 'id') { $col = '_id'; }
+
+                // Convert 24-char strings to ObjectId for _id OR any foreign key ending in _id
+                $is_id_column = ($col === '_id' || (strlen($col) >= 3 && substr($col, -3) === '_id'));
+                if ($is_id_column && is_string($val) && strlen($val) === 24) {
+                    try {
+                        $val = new \MongoDB\BSON\ObjectId($val);
+                    } catch (\Exception $e) { /* keep as string */ }
+                }
+                
+                // --- CUSTOM ENGINE OPERATORS (DATE, YEAR, MONTH) ---
+                if ($op === 'DATE') {
+                    $clause = [$col => ['$gte' => $val . ' 00:00:00', '$lte' => $val . ' 23:59:59']];
+                } elseif ($op === 'YEAR') {
+                    $clause = [$col => ['$regex' => '^' . $val . '-', '$options' => 'i']];
+                } elseif ($op === 'MONTH') {
+                    $month = str_pad((string)$val, 2, '0', STR_PAD_LEFT);
+                    $clause = [$col => ['$regex' => '-' . $month . '-', '$options' => 'i']];
                 } else {
-                    $filter[$col] = [$mongoOp => $val];
+                    // --- STANDARD OPERATORS ---
+                    switch ($op) {
+                        case '=': $mongoOp = '$eq'; break;
+                        case '>': $mongoOp = '$gt'; break;
+                        case '<': $mongoOp = '$lt'; break;
+                        case '>=': $mongoOp = '$gte'; break;
+                        case '<=': $mongoOp = '$lte'; break;
+                        case '!=': $mongoOp = '$ne'; break;
+                        case 'IN': $mongoOp = '$in'; break;
+                        case 'NOT IN': $mongoOp = '$nin'; break;
+                        case 'LIKE': $mongoOp = '$regex'; break;
+                        default: $mongoOp = '$eq';
+                    }
+
+                    if (($op === 'IN' || $op === 'NOT IN') && !is_array($val)) {
+                        $val = [$val];
+                    } elseif ($op === 'LIKE') {
+                        $clause = [$col => ['$regex' => str_replace('%', '', $val), '$options' => 'i']];
+                    } elseif ($op === 'IS NULL') {
+                        $clause = [$col => null];
+                    } elseif ($op === 'IS NOT NULL') {
+                        $clause = [$col => ['$ne' => null]];
+                    } elseif ($op === 'BETWEEN' && is_array($val)) {
+                        $clause = [$col => [
+                            '$gte' => $this->getGrammar()->formatDate($val[0]), 
+                            '$lte' => $this->getGrammar()->formatDate($val[1])
+                        ]];
+                    } else {
+                        $val = $this->getGrammar()->formatDate($val);
+                        $clause = [$col => [$mongoOp => $val]];
+                    }
+                }
+            }
+
+            if (empty($clause)) continue;
+
+            $boolean = strtoupper($w['boolean'] ?? 'AND');
+            if ($i === 0) {
+                $filter = $clause;
+            } else {
+                if ($boolean === 'OR') {
+                    $filter = ['$or' => [$filter, $clause]];
+                } else {
+                    // Handle AND by merging if possible, or using $and if keys conflict
+                    $key = key($clause);
+                    if (isset($filter[$key]) || isset($filter['$and']) || isset($filter['$or'])) {
+                        if (!isset($filter['$and'])) {
+                            $filter = ['$and' => [$filter]];
+                        }
+                        $filter['$and'][] = $clause;
+                    } else {
+                        $filter = array_merge($filter, $clause);
+                    }
                 }
             }
         }

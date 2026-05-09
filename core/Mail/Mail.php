@@ -38,6 +38,7 @@ class Mail
     protected $viewData = [];
     protected $attachments = [];
     protected $debug = false;
+    protected $lastError = null;
 
     public function __construct()
     {
@@ -96,6 +97,14 @@ class Mail
         $this->smtpConfig = $config;
         $this->driverType = 'smtp';
         return $this;
+    }
+
+    /**
+     * Get the last error encountered during send
+     */
+    public function getLastError(): ?string
+    {
+        return $this->lastError;
     }
 
     public function getDriverLogs(): array
@@ -165,6 +174,8 @@ class Mail
 
     public function send($mailable = null): bool
     {
+        $this->lastError = null;
+
         if ($mailable instanceof Mailable) {
             $mailable->build();
             $this->subject = $mailable->subject;
@@ -188,8 +199,9 @@ class Mail
         $from = $this->from;
 
         // 3. Delegate to Driver
+        $result = false;
         try {
-            return $this->driverInstance->send(
+            $result = $this->driverInstance->send(
                 $to,
                 $this->subject,
                 $body,
@@ -198,12 +210,32 @@ class Mail
                 $this->isHtml
             );
         } catch (\Exception $e) {
+            $this->lastError = $e->getMessage();
             if ($this->debug) {
                 throw $e;
             }
-            error_log("Mail Error: " . $e->getMessage());
-            return false;
+            error_log("Mail Error: " . $this->lastError);
         }
+
+        // Audit Log
+        if (function_exists('storage_path')) {
+            $logDir = storage_path('logs');
+            if (!is_dir($logDir)) {
+                mkdir($logDir, 0777, true);
+            }
+
+            $logMsg = sprintf(
+                "[%s] To: %s | Subject: %s | Result: %s %s\n",
+                date('Y-m-d H:i:s'),
+                implode(', ', $to),
+                $this->subject,
+                $result ? 'SUCCESS' : 'FAILURE',
+                $this->lastError ? "({$this->lastError})" : ""
+            );
+            file_put_contents($logDir . '/mail_audit.log', $logMsg, FILE_APPEND);
+        }
+
+        return $result;
     }
 
     public function queue(): bool

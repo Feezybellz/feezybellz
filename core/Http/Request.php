@@ -116,6 +116,18 @@ class Request
     }
 
     /**
+     * Determine if the request contains a given input item.
+     * 
+     * @param string $key
+     * @return bool
+     */
+    public function has(string $key): bool
+    {
+        $input = $this->all();
+        return isset($input[$key]);
+    }
+
+    /**
      * Get all input (query + post + json)
      * * @return array
      */

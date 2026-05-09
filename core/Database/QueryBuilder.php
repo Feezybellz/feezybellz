@@ -73,8 +73,17 @@ class QueryBuilder
         return $this->join($table, $first, $operator, $second, 'RIGHT');
     }
 
-    public function where(string $column, $operator, $value = null, string $boolean = 'AND'): self
+    public function where($column, $operator = null, $value = null, string $boolean = 'AND'): self
     {
+        if ($column instanceof \Closure) {
+            $this->where[] = [
+                'type' => 'nested',
+                'query' => $column,
+                'boolean' => $boolean
+            ];
+            return $this;
+        }
+
         if (func_num_args() === 2) {
             $value = $operator;
             $operator = '=';
@@ -83,7 +92,7 @@ class QueryBuilder
         return $this;
     }
 
-    public function orWhere(string $column, $operator, $value = null): self
+    public function orWhere($column, $operator = null, $value = null): self
     {
         return $this->where($column, $operator, $value, 'OR');
     }

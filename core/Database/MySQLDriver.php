@@ -262,6 +262,18 @@ class MySQLDriver implements DatabaseDriverInterface
                 continue;
             }
 
+            if (isset($w['type']) && $w['type'] === 'nested') {
+                $nestedBuilder = new QueryBuilder();
+                $w['query']($nestedBuilder);
+                $nestedSql = $this->compileWhere($nestedBuilder, $params);
+                if (!empty($nestedSql)) {
+                    // Strip the " WHERE " part from the nested SQL
+                    $nestedSql = substr($nestedSql, 7);
+                    $clauses[] = "{$boolean}({$nestedSql})";
+                }
+                continue;
+            }
+
             $operator = strtoupper($w['operator']);
             $column = $this->getGrammar()->wrap($w['column']);
             
