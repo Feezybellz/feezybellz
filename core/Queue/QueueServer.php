@@ -814,63 +814,35 @@ class QueueServer
         return;
     }
 
-    // ── Step 3: Normalise the payload into a unified job record ──────────
-    //
-    // Support both the OLD format {'callable':..., 'args':[...]}
-    // and the NEW typed format    {'type':..., ...}
-    // so existing callers aren't broken during the transition.
-
-    $type = isset($payload['type']) ? $payload['type'] : 'callable';   // default to legacy shape
+    // ── Step 3: Validate payload shape ───────────────────────────────────
+    $type = isset($payload['type']) ? $payload['type'] : 'callable';
     $args = isset($payload['args']) && is_array($payload['args'])
           ? $payload['args']
           : [];
 
-    switch ($type) {
-
-        // ── Named function or static method: ['Class', 'method'] / 'fn' ──
-        case 'callable':
-            $callable = $payload['callable'] ?? null;
-            if ($callable === null) {
-                $this->log("Missing 'callable' key from resource #{$resourceId}");
-                $this->sendResponse($resourceId, false, "Missing required 'callable' key");
-                $this->disconnectClient($resourceId);
-                return;
-            }
-            $callableName = is_array($callable) ? implode('::', $callable) : (string) $callable;
-            break;
-
-        // ── Serialised Closure (from ClosureSerializer) ───────────────────
-        case 'closure':
-            if (empty($payload['data'])) {
-                $this->log("Missing 'data' key for closure from resource #{$resourceId}");
-                $this->sendResponse($resourceId, false, "Missing 'data' for closure payload");
-                $this->disconnectClient($resourceId);
-                return;
-            }
-            // We store the raw payload; deserialization happens inside the
-            // child process so a broken closure can't crash the parent.
-            $callable     = $payload;   // pass the whole envelope to the job
-            $callableName = '{closure}';
-            break;
-
-        // ── Serialised invokable object ───────────────────────────────────
-        case 'object':
-            if (empty($payload['data'])) {
-                $this->log("Missing 'data' key for object from resource #{$resourceId}");
-                $this->sendResponse($resourceId, false, "Missing 'data' for object payload");
-                $this->disconnectClient($resourceId);
-                return;
-            }
-            $callable     = $payload;   // pass the whole envelope to the job
-            $callableName = isset($payload['class']) ? $payload['class'] : '{object}';
-            break;
-
-        default:
-            $this->log("Unknown payload type '{$type}' from resource #{$resourceId}");
-            $this->sendResponse($resourceId, false, "Unknown payload type: {$type}");
-            $this->disconnectClient($resourceId);
-            return;
+    if ($type !== 'callable') {
+        $this->log("Rejected unsupported payload type '{$type}' from resource #{$resourceId}");
+        $this->sendResponse($resourceId, false, 'Only named callables are allowed by security policy');
+        $this->disconnectClient($resourceId);
+        return;
     }
+
+    $callable = $payload['callable'] ?? null;
+    if ($callable === null) {
+        $this->log("Missing 'callable' key from resource #{$resourceId}");
+        $this->sendResponse($resourceId, false, "Missing required 'callable' key");
+        $this->disconnectClient($resourceId);
+        return;
+    }
+
+    if (!$this->isValidCallablePayload($callable)) {
+        $this->log("Rejected invalid callable payload from resource #{$resourceId}");
+        $this->sendResponse($resourceId, false, 'Invalid callable format');
+        $this->disconnectClient($resourceId);
+        return;
+    }
+
+    $callableName = is_array($callable) ? implode('::', $callable) : (string) $callable;
 
     // ── Step 4: Generate a unique job ID ────────────────────────────────
     $this->totalJobsReceived++;
@@ -879,7 +851,7 @@ class QueueServer
     // ── Step 5: Enqueue ─────────────────────────────────────────────────
     $job = [
         'id'        => $jobId,
-        'type'      => $type,          // ← NEW: carried through to executeJob()
+        'type'      => $type,
         'callable'  => $callable,
         'args'      => $args,
         'queued_at' => microtime(true),
@@ -892,6 +864,25 @@ class QueueServer
     $this->sendResponse($resourceId, true, "Job queued successfully", ['job_id' => $jobId]);
     $this->disconnectClient($resourceId);
 }
+
+    private function isValidCallablePayload($callable): bool
+    {
+        if (is_string($callable)) {
+            if (!preg_match('/^[A-Za-z_\\\\][A-Za-z0-9_\\\\]*$/', $callable)) {
+                return false;
+            }
+
+            $blocked = ['system', 'exec', 'shell_exec', 'passthru', 'assert', 'eval', 'unserialize'];
+            return !in_array(strtolower($callable), $blocked, true);
+        }
+
+        if (is_array($callable) && count($callable) === 2 && is_string($callable[0]) && is_string($callable[1])) {
+            return preg_match('/^[A-Za-z_\\\\][A-Za-z0-9_\\\\]*$/', $callable[0])
+                && preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $callable[1]);
+        }
+
+        return false;
+    }
 
 
     // ─── Job Execution (Forking) ────────────────────────────────────────
@@ -983,14 +974,9 @@ class QueueServer
         $jobId        = $job['id'];
         $callable     = $job['callable'];
         $args         = $job['args'];
-        $type         = isset($job['type']) ? $job['type'] : 'callable';
 
         // Format the callable name for logging
-        if ($type === 'closure') {
-            $callableName = '{closure}';
-        } elseif ($type === 'object') {
-            $callableName = isset($job['callable']['class']) ? $job['callable']['class'] : '{object}';
-        } elseif (is_array($callable)) {
+        if (is_array($callable)) {
             $callableName = implode('::', $callable);
         } else {
             $callableName = (string) $callable;
@@ -1033,23 +1019,6 @@ class QueueServer
                     fwrite(STDERR, "[" . date('Y-m-d H:i:s') . "] [CHILD] Hook Failed [{$jobId}]: {$e->getMessage()}\n");
                     exit(1);
                 }
-            }
-
-            // ── Resolve the callable from the typed envelope ─────────────
-            try {
-                switch ($type) {
-                    case 'closure':
-                        $callable = \Framework\Core\Support\ClosureSerializer::deserialize($callable['data']);
-                        break;
-                    case 'object':
-                        $callable = unserialize($callable['data']);
-                        break;
-                    default:
-                        // $callable remains the same
-                }
-            } catch (\Throwable $e) {
-                fwrite(STDERR, "[" . date('Y-m-d H:i:s') . "] [CHILD] RESOLVE FAILED [{$jobId}] {$callableName} — {$e->getMessage()}\n");
-                exit(1);
             }
 
             if (!is_callable($callable)) {

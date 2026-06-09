@@ -31,7 +31,6 @@
  */
 
 namespace Framework\Core\Queue;
-use Framework\Core\Support\ClosureSerializer;
 class QueueClient
 {
     // ─── Properties ─────────────────────────────────────────────────────
@@ -82,23 +81,18 @@ class QueueClient
     public function push($callable, array $args = []): array
     {
         // ── Step 1: Build & Encode the job payload ──────────────────────
-        if ($callable instanceof \Closure) {
-            // Use our self-written serializer — no third-party deps
-            $payload = ClosureSerializer::toPayload($callable, $args);
-        } elseif (is_object($callable)) {
-            $payload = [
-                'type'  => 'object',
-                'class' => get_class($callable),
-                'data'  => serialize($callable),
-                'args'  => $args,
-            ];
-        } else {
-            $payload = [
-                'type'     => 'callable',
-                'callable' => $callable,
-                'args'     => $args,
+        if ($callable instanceof \Closure || is_object($callable)) {
+            return [
+                'success' => false,
+                'message' => 'Security policy prevents dispatching closures/objects. Dispatch named callables only.',
             ];
         }
+
+        $payload = [
+            'type'     => 'callable',
+            'callable' => $callable,
+            'args'     => $args,
+        ];
 
         $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
 

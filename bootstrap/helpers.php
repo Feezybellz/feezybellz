@@ -249,6 +249,32 @@ if (!function_exists('env')) {
     function env(?string $key = null, $default = null)
     {
         static $loaded = false;
+
+        $normalize = static function ($value) {
+            if (!is_string($value)) {
+                return $value;
+            }
+
+            $lower = strtolower($value);
+
+            if (in_array($lower, ['true', '(true)'], true)) {
+                return true;
+            }
+
+            if (in_array($lower, ['false', '(false)'], true)) {
+                return false;
+            }
+
+            if (in_array($lower, ['null', '(null)'], true)) {
+                return null;
+            }
+
+            if (in_array($lower, ['empty', '(empty)'], true)) {
+                return '';
+            }
+
+            return $value;
+        };
         
         if (!$loaded) {
             $envFile = dirname(__DIR__) . '/.env';
@@ -262,10 +288,11 @@ if (!function_exists('env')) {
                     list($name, $value) = explode('=', $line, 2);
                     $name = trim($name);
                     $value = trim(trim($value), '"\'');
+                    $value = $normalize($value);
                     
                     if (!array_key_exists($name, $_ENV)) {
                         $_ENV[$name] = $value;
-                        putenv("{$name}={$value}");
+                        putenv("{$name}=" . (is_bool($value) ? ($value ? 'true' : 'false') : (string)$value));
                     }
                 }
 
@@ -275,9 +302,11 @@ if (!function_exists('env')) {
                         $resolvedValue = preg_replace_callback('/\${([^}]+)}/', function($matches) {
                             return $_ENV[$matches[1]] ?? $matches[0];
                         }, $value);
+
+                        $resolvedValue = $normalize($resolvedValue);
                         
                         $_ENV[$name] = $resolvedValue;
-                        putenv("{$name}={$resolvedValue}");
+                        putenv("{$name}=" . (is_bool($resolvedValue) ? ($resolvedValue ? 'true' : 'false') : (string)$resolvedValue));
                     }
                 }
             }
@@ -584,6 +613,5 @@ if (!function_exists('session')) {
         return $session->get($key, $default);
     }
 }
-
 
 

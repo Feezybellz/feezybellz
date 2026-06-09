@@ -19,6 +19,13 @@ class Kernel
         \App\Middleware\TenantMiddleware::class,
     ];
 
+    /**
+     * Route-specific middleware that can be assigned to individual routes
+     */
+    protected array $routeMiddleware = [
+        'csrf' => \App\Middleware\CsrfMiddleware::class,
+    ];
+
     public function __construct(Application $app)
     {
         $this->app = $app;
@@ -36,8 +43,9 @@ class Kernel
             $response = new Response();
             Router::init($request, $response);
             
-            // Register Global Middleware in Router
+            // Register Middleware in Router
             Router::globalMiddleware($this->middleware);
+            Router::aliasMiddleware($this->routeMiddleware);
 
             Router::loadRoutesFrom($this->app->basePath('routes'));
             

@@ -12,7 +12,7 @@ class Handler
     public function __construct()
     {
         // Check if the app is in debug mode (from .env)
-        $this->debug = env('APP_DEBUG', true);
+        $this->debug = filter_var(env('APP_DEBUG', false), FILTER_VALIDATE_BOOLEAN);
     }
 
     /**

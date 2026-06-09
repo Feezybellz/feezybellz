@@ -10,6 +10,7 @@ class Router
 {
     protected static $routes = [];
     protected static $globalMiddleware = [];
+    protected static $middlewareAliases = [];
     protected static $groupStack = [];
     protected static $request = null;
     protected static $response = null;
@@ -22,6 +23,14 @@ class Router
     public static function globalMiddleware(array $middleware): void
     {
         self::$globalMiddleware = array_merge(self::$globalMiddleware, $middleware);
+    }
+
+    /**
+     * Register middleware aliases
+     */
+    public static function aliasMiddleware(array $aliases): void
+    {
+        self::$middlewareAliases = array_merge(self::$middlewareAliases, $aliases);
     }
 
     /**
@@ -512,6 +521,11 @@ class Router
     protected static function runMiddleware($middleware, array $params, callable $next)
     {
         $instance = null;
+
+        // Resolve aliases
+        if (is_string($middleware) && isset(self::$middlewareAliases[$middleware])) {
+            $middleware = self::$middlewareAliases[$middleware];
+        }
 
         // Resolve the middleware instance
         if (is_string($middleware)) {

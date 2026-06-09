@@ -13,6 +13,19 @@ class PHPSessionDriver implements SessionDriverInterface
         }
 
         if (session_status() === PHP_SESSION_NONE) {
+            if (!headers_sent()) {
+                $params = session_get_cookie_params();
+                session_set_cookie_params([
+                    'lifetime' => $params['lifetime'] ?? 0,
+                    'path' => $params['path'] ?? '/',
+                    'domain' => $params['domain'] ?? '',
+                    'secure' => $this->isHttps(),
+                    'httponly' => true,
+                    'samesite' => 'Lax',
+                ]);
+                ini_set('session.use_strict_mode', '1');
+            }
+
             // Use @ to suppress "headers already sent" warnings in CLI/Tests
             if (!@session_start()) {
                 return false;
@@ -75,5 +88,11 @@ class PHPSessionDriver implements SessionDriverInterface
     public function id(): string
     {
         return session_id();
+    }
+
+    private function isHttps(): bool
+    {
+        return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+            || (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443);
     }
 }

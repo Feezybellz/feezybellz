@@ -12,9 +12,10 @@ class TenantTestController
     {
         $users = User::all();
         $activeTenant = session()->get('active_tenant', 'Main Database (Default)');
+        $escape = static fn($value): string => htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
         
         $html = "<h1>Multi-Tenant Connection Test</h1>";
-        $html .= "<p>Current Active Tenant: <strong>{$activeTenant}</strong></p>";
+        $html .= "<p>Current Active Tenant: <strong>" . $escape($activeTenant) . "</strong></p>";
         
         $html .= "<h3>Switch Tenant:</h3>";
         $html .= "<ul>";
@@ -30,7 +31,7 @@ class TenantTestController
             $html .= "<li>No users found.</li>";
         } else {
             foreach ($users as $user) {
-                $html .= "<li>ID: {$user->id} | Name: {$user->name}</li>";
+                $html .= "<li>ID: " . $escape($user->id) . " | Name: " . $escape($user->name) . "</li>";
             }
         }
         $html .= "</ul>";

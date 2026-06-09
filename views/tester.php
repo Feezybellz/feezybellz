@@ -91,6 +91,7 @@
                     </div>
                     
                     <form id="tester-form">
+                        <?php echo function_exists('csrf_field') ? csrf_field() : ''; ?>
                         <div class="form-group">
                             <label>Method & URL</label>
                             <div class="url-input-group">

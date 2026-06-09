@@ -122,9 +122,22 @@ class SmtpDriver implements MailDriverInterface
     }
 
     private function sendCommand(string $cmd, int $code): void {
-        $this->log("> " . $cmd);
+        $this->log("> " . $this->redactCommandForLogs($cmd));
         fwrite($this->socket, $cmd . "\r\n");
         $this->readResponse($code);
+    }
+
+    private function redactCommandForLogs(string $cmd): string
+    {
+        if (stripos($cmd, 'AUTH ') === 0) {
+            return 'AUTH [REDACTED]';
+        }
+
+        if (preg_match('/^[A-Za-z0-9+\/=]{12,}$/', $cmd)) {
+            return '[REDACTED BASE64 PAYLOAD]';
+        }
+
+        return $cmd;
     }
 
     private function readResponse(int $code = null): string {
