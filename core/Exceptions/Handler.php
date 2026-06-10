@@ -4,6 +4,7 @@ namespace Framework\Core\Exceptions;
 
 use Framework\Core\Http\Request;
 use Framework\Core\Http\Response;
+use Framework\Core\Logging\Log;
 
 class Handler
 {
@@ -44,8 +45,12 @@ class Handler
      */
     public function handleException(\Throwable $e): void
     {
-        // Log the error securely to a file (optional but recommended)
-        error_log((string) $e);
+        // Log the error using the Log Facade
+        Log::error(get_class($e) . ': ' . $e->getMessage(), [
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'trace' => $e->getTraceAsString()
+        ]);
 
         // Check if running in CLI
         if (php_sapi_name() === 'cli' || defined('STDIN')) {

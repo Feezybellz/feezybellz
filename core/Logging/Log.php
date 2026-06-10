@@ -23,7 +23,8 @@ class Log
     public static function getLogger(): Logger
     {
         if (self::$logger === null) {
-            self::$logger = new Logger();
+            $level = function_exists('env') ? env('LOG_LEVEL', 'info') : 'info';
+            self::$logger = new Logger(null, $level);
         }
         return self::$logger;
     }

@@ -5,8 +5,23 @@ namespace Framework\Core\Logging;
 class Logger
 {
     protected $logPath;
+    protected $minLevel;
 
-    public function __construct(string $logPath = null)
+    /**
+     * PSR-3 Log Levels with numeric weights
+     */
+    protected const LEVELS = [
+        'emergency' => 0,
+        'alert'     => 1,
+        'critical'  => 2,
+        'error'     => 3,
+        'warning'   => 4,
+        'notice'    => 5,
+        'info'      => 6,
+        'debug'     => 7,
+    ];
+
+    public function __construct(string $logPath = null, string $minLevel = 'info')
     {
         // Default to a daily rotating log file in the storage/logs directory
         if ($logPath === null) {
@@ -15,6 +30,8 @@ class Logger
         } else {
             $this->logPath = $logPath;
         }
+
+        $this->minLevel = strtolower($minLevel);
         $this->ensureLogDirectoryExists();
     }
 
@@ -25,7 +42,7 @@ class Logger
     {
         $dir = dirname($this->logPath);
         if (!is_dir($dir)) {
-            mkdir($dir, 0777, true);
+            @mkdir($dir, 0777, true);
         }
     }
 
@@ -34,6 +51,13 @@ class Logger
      */
     public function log(string $level, string $message, array $context = []): void
     {
+        $level = strtolower($level);
+
+        // Filter by log level
+        if (!$this->shouldLog($level)) {
+            return;
+        }
+
         $date = date('Y-m-d H:i:s');
         
         // Convert the context array to a JSON string for easy reading, if provided
@@ -45,7 +69,18 @@ class Logger
         $logEntry = "[{$date}] {$levelUpper}: {$message}{$contextString}" . PHP_EOL;
         
         // Write to the file, appending to the end, and locking the file during write to prevent concurrent corruption
-        file_put_contents($this->logPath, $logEntry, FILE_APPEND | LOCK_EX);
+        @file_put_contents($this->logPath, $logEntry, FILE_APPEND | LOCK_EX);
+    }
+
+    /**
+     * Check if the message level meets the minimum log level threshold.
+     */
+    protected function shouldLog(string $level): bool
+    {
+        $currentWeight = self::LEVELS[$level] ?? 7;
+        $minWeight = self::LEVELS[$this->minLevel] ?? 6;
+
+        return $currentWeight <= $minWeight;
     }
 
     // ==========================================

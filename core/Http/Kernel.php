@@ -24,6 +24,7 @@ class Kernel
      */
     protected array $routeMiddleware = [
         'csrf' => \App\Middleware\CsrfMiddleware::class,
+        'cors' => \App\Middleware\CorsMiddleware::class,
     ];
 
     public function __construct(Application $app)

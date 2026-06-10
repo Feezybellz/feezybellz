@@ -70,6 +70,29 @@ $users = \App\Models\User::all();
 
 This query runs on whichever tenant connection was applied to `default` in middleware.
 
+## CLI Usage (Migrations & Seeders)
+
+You can run migrations and seeders for specific tenants or connections using the `--connection` option. You can also specify a custom migrations directory using the `--path` option.
+
+```bash
+# Run migrations for a specific connection
+php console migrate --connection=admin
+
+# Run migrations from a custom path
+php console migrate --path=database/migrations/tenants
+
+# Combine path and connection
+php console migrate --path=database/migrations/tenants --connection=tenant1
+
+# Rollback migrations for a specific connection and path
+php console migrate:rollback --connection=admin --path=database/migrations/tenants
+
+# Run seeders for a specific connection
+php console db:seed --connection=admin
+```
+
+This works by temporarily switching the framework's default connection to the specified one while the command executes, ensuring that `Schema` and `DB` calls inside migration/seeder files target the correct database.
+
 ## What Each Connection Method Does
 
 - `DB::addConnection($name, $config)`

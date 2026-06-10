@@ -15,6 +15,11 @@ class SeedCommand extends Command
     {
         $seederName = $this->argument(0);
         $seedersPath = dirname(dirname(dirname(__DIR__))) . '/database/seeders';
+        $connection = $this->option('connection');
+
+        if ($connection) {
+            $this->info("Seeding on connection: {$connection}");
+        }
 
         if (!is_dir($seedersPath)) {
             $this->error('No seeders directory found.');
@@ -29,12 +34,12 @@ class SeedCommand extends Command
 
         // If a specific seeder is provided, run only that one
         if ($seederName) {
-            $this->runSeeder($seedersPath, $seederName);
+            $this->runSeeder($seedersPath, $seederName, $connection);
             return;
         }
 
         // Run all seeders in the directory
-        $this->runAllSeeders($seedersPath);
+        $this->runAllSeeders($seedersPath, $connection);
     }
 
     /**
@@ -42,9 +47,10 @@ class SeedCommand extends Command
      * 
      * @param string $seedersPath
      * @param string $seederName
+     * @param string|null $connection
      * @return void
      */
-    protected function runSeeder(string $seedersPath, string $seederName): void
+    protected function runSeeder(string $seedersPath, string $seederName, ?string $connection = null): void
     {
         $filePath = $seedersPath . '/' . $seederName . '.php';
 
@@ -54,7 +60,7 @@ class SeedCommand extends Command
             return;
         }
 
-        $this->runSeederFile($filePath, $seederName);
+        $this->runSeederFile($filePath, $seederName, $connection);
     }
 
     /**
@@ -62,9 +68,10 @@ class SeedCommand extends Command
      * 
      * @param string $filePath
      * @param string $className
+     * @param string|null $connection
      * @return void
      */
-    protected function runSeederFile(string $filePath, string $className): void
+    protected function runSeederFile(string $filePath, string $className, ?string $connection = null): void
     {
         require_once $filePath;
 
@@ -83,6 +90,9 @@ class SeedCommand extends Command
 
         try {
             $seeder = new $className();
+            if ($connection) {
+                $seeder->setConnection($connection);
+            }
             $seeder->run();
             $this->line('');
             $this->success("Database seeding completed successfully.");
@@ -95,9 +105,10 @@ class SeedCommand extends Command
      * Run all seeder files in the seeders directory
      * 
      * @param string $seedersPath
+     * @param string|null $connection
      * @return void
      */
-    protected function runAllSeeders(string $seedersPath): void
+    protected function runAllSeeders(string $seedersPath, ?string $connection = null): void
     {
         $files = glob($seedersPath . '/*.php');
         $count = 0;
@@ -120,6 +131,9 @@ class SeedCommand extends Command
             $this->info("Seeding: {$className}");
             try {
                 $seeder = new $className();
+                if ($connection) {
+                    $seeder->setConnection($connection);
+                }
                 $seeder->run();
                 $count++;
                 $this->success("Seeded: {$className}");

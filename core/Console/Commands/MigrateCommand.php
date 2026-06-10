@@ -9,9 +9,20 @@ class MigrateCommand extends Command
 {
     public function execute(): void
     {
-        $this->info('Running migrations...');
+        $connection = $this->option('connection');
+        $path = $this->option('path');
+
+        if ($connection) {
+            $this->info("Running migrations on connection: {$connection}...");
+        } else {
+            $this->info('Running migrations...');
+        }
+
+        if ($path) {
+            $this->info("Using custom migrations path: {$path}");
+        }
         
-        $migrator = new Migrator();
+        $migrator = new Migrator($path, $connection);
         
         try {
             // Debug: Check migration files

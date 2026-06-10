@@ -4,6 +4,19 @@ namespace Framework\Core\Database;
 
 abstract class Seeder
 {
+    protected $connection = 'default';
+
+    /**
+     * Set the database connection to use
+     * 
+     * @param string $connection
+     * @return void
+     */
+    public function setConnection(string $connection): void
+    {
+        $this->connection = $connection;
+    }
+
     /**
      * Run the seeder logic.
      * * @return void
@@ -19,7 +32,7 @@ abstract class Seeder
      */
     protected function insert(string $table, array $data): bool
     {
-        return DB::table($table)->insert($data);
+        return DB::table($table)->on($this->connection)->insert($data);
     }
 
     /**
@@ -35,11 +48,11 @@ abstract class Seeder
             return false;
         }
 
-        $builder = DB::table($table);
+        $builder = DB::table($table)->on($this->connection);
         $builder->operation = 'insert';
         $builder->data = $rows;
 
-        return (bool)DB::connection()->executeBuilder($builder);
+        return (bool)DB::connection($this->connection)->executeBuilder($builder);
     }
 
     /**
@@ -52,7 +65,7 @@ abstract class Seeder
      */
     protected function upsert(string $table, array $data, array $uniqueBy): bool
     {
-        $builder = DB::table($table);
+        $builder = DB::table($table)->on($this->connection);
         $builder->operation = 'update';
         $builder->data = $data;
         
@@ -64,19 +77,19 @@ abstract class Seeder
         }
 
         // The driver executeBuilder handles the native upsert logic
-        return (bool)DB::connection()->executeBuilder($builder);
+        return (bool)DB::connection($this->connection)->executeBuilder($builder);
     }
 
     protected function batchUpsert(string $table, array $rows, array $uniqueBy): bool
     {
         if (empty($rows)) return false;
 
-        $builder = DB::table($table);
+        $builder = DB::table($table)->on($this->connection);
         $builder->operation = 'upsert'; // New operation type
         $builder->data = $rows;
         $builder->uniqueBy = $uniqueBy; // Tell the driver which columns to check
 
-        return (bool)DB::connection()->executeBuilder($builder);
+        return (bool)DB::connection($this->connection)->executeBuilder($builder);
     }
     /**
      * Call another seeder.
@@ -100,6 +113,9 @@ abstract class Seeder
 
         $this->info("Seeding: {$seederClass}");
         $seeder = new $seederClass();
+        if (method_exists($seeder, 'setConnection')) {
+            $seeder->setConnection($this->connection);
+        }
         $seeder->run();
         $this->success("Seeded: {$seederClass}");
     }

@@ -9,9 +9,20 @@ class MigrateRollbackCommand extends Command
 {
     public function execute(): void
     {
-        $this->info('Rolling back migrations...');
+        $connection = $this->option('connection');
+        $path = $this->option('path');
+
+        if ($connection) {
+            $this->info("Rolling back migrations on connection: {$connection}...");
+        } else {
+            $this->info('Rolling back migrations...');
+        }
+
+        if ($path) {
+            $this->info("Using custom migrations path: {$path}");
+        }
         
-        $migrator = new Migrator();
+        $migrator = new Migrator($path, $connection);
         
         try {
             $steps = (int) $this->option('step', 1);

@@ -6,6 +6,7 @@ class DB
 {
     protected static $connections = [];
     protected static $drivers = [];
+    protected static $defaultConnection = 'default';
     
     /**
      * Initialize a database connection
@@ -21,15 +22,33 @@ class DB
             unset(self::$drivers[$name]);
         }
     }
+
+    /**
+     * Set the default connection name
+     */
+    public static function setDefaultConnection(string $name): void
+    {
+        self::$defaultConnection = $name;
+    }
+
+    /**
+     * Get the default connection name
+     */
+    public static function getDefaultConnectionName(): string
+    {
+        return self::$defaultConnection;
+    }
     
     /**
      * Get a database connection
      * 
-     * @param string $name Connection name (default: 'default')
+     * @param string $name Connection name (default: null uses self::$defaultConnection)
      * @return DatabaseDriverInterface
      */
-    public static function connection(string $name = 'default'): DatabaseDriverInterface
+    public static function connection(string $name = null): DatabaseDriverInterface
     {
+        $name = $name ?? self::$defaultConnection;
+        
         if (!isset(self::$drivers[$name])) {
             if (!isset(self::$connections[$name])) {
                 throw new \Exception("Database connection '{$name}' not found");
@@ -67,7 +86,10 @@ class DB
                 return new class implements DatabaseDriverInterface {
                     public function connect(array $config): void {}
                     public function query(string $query, array $params = []) { return new \stdClass(); }
-                    public function executeBuilder(QueryBuilder $builder) { return []; }
+                    public function executeBuilder(QueryBuilder $builder) { 
+                        if ($builder->operation === 'count') return 0;
+                        return []; 
+                    }
                     public function insert(string $table, array $data) { return 1; }
                     public function update(string $table, array $data, array $where) { return 1; }
                     public function delete(string $table, array $where) { return 1; }
