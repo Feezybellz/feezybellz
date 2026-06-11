@@ -11,6 +11,15 @@ abstract class Migration
         $this->db = DB::connection();
     }
 
+    /**
+     * Set the database connection for the migration
+     */
+    public function setConnection(string $name): self
+    {
+        $this->db = DB::connection($name);
+        return $this;
+    }
+
     abstract public function up(): void;
     abstract public function down(): void;
     

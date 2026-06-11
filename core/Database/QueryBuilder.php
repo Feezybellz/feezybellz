@@ -24,9 +24,9 @@ class QueryBuilder
     /**
      * Set the database connection to use
      */
-    public function on(string $connection): self
+    public function on(?string $connection): self
     {
-        $this->connection = $connection;
+        $this->connection = $connection ?? 'default';
         return $this;
     }
 

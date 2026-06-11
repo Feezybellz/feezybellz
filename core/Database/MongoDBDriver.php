@@ -610,6 +610,11 @@ return iterator_to_array($cursor);
         }
     }
 
+    public function inTransaction(): bool
+    {
+        return $this->session !== null;
+    }
+
     /**
      * Helper to execute a MongoDB command with unified error handling.
      */

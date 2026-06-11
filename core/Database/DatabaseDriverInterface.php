@@ -44,6 +44,7 @@ interface DatabaseDriverInterface
     public function beginTransaction(): void;
     public function commit(): void;
     public function rollBack(): void;
+    public function inTransaction(): bool;
 
     /**
      * Get the driver's specific grammar

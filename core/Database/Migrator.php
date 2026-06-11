@@ -34,6 +34,11 @@ class Migrator
             $name = basename($file, '.php');
             if (in_array($name, $executed)) continue;
 
+            $previousConnection = DB::getDefaultConnectionName();
+            if ($this->connection) {
+                DB::setDefaultConnection($this->connection);
+            }
+
             $migration = require $file;
             if (is_object($migration)) {
                 $instance = $migration;
@@ -43,16 +48,8 @@ class Migrator
             }
             
             // Set the connection on the migration instance if it supports it
-            if (method_exists($instance, 'setConnection')) {
+            if ($this->connection && method_exists($instance, 'setConnection')) {
                 $instance->setConnection($this->connection);
-            }
-            
-            // Note: Schema and DB calls inside migration files currently use DB::connection()
-            // We need to ensure they use the correct connection.
-            // Temporary surgical approach: Switch default connection if it's a specific one
-            $previousConnection = DB::getDefaultConnectionName();
-            if ($this->connection) {
-                DB::setDefaultConnection($this->connection);
             }
 
             $instance->up();
@@ -75,8 +72,8 @@ class Migrator
         $rolledBack = [];
         
         // POLYGLOT: Get the last N executed migrations using QueryBuilder
-        $executed = DB::table($this->migrationsTable)
-            ->on($this->connection ?? 'default')
+        $connection = $this->connection ?? DB::getDefaultConnectionName();
+        $executed = DB::table($this->migrationsTable)->on($connection)
             ->orderBy('id', 'DESC')
             ->limit($steps)
             ->get();
@@ -114,8 +111,8 @@ class Migrator
 
     protected function getExecutedMigrations(): array
     {
-        $results = DB::table($this->migrationsTable)
-            ->on($this->connection ?? 'default')
+        $connection = $this->connection ?? DB::getDefaultConnectionName();
+        $results = DB::table($this->migrationsTable)->on($connection)
             ->select(['migration'])
             ->orderBy('id', 'ASC')
             ->get();
@@ -125,27 +122,25 @@ class Migrator
 
     protected function recordMigration(string $name): void
     {
-        DB::table($this->migrationsTable)
-            ->on($this->connection ?? 'default')
-            ->insert([
-                'migration' => $name,
-                'batch' => $this->getNextBatchNumber(),
-            ]);
+        $connection = $this->connection ?? DB::getDefaultConnectionName();
+        DB::table($this->migrationsTable)->on($connection)->insert([
+            'migration' => $name,
+            'batch' => $this->getNextBatchNumber(),
+        ]);
     }
 
     protected function removeMigration(string $name): void
     {
-        DB::table($this->migrationsTable)
-            ->on($this->connection ?? 'default')
+        $connection = $this->connection ?? DB::getDefaultConnectionName();
+        DB::table($this->migrationsTable)->on($connection)
             ->where('migration', '=', $name)
             ->delete();
     }
 
     protected function getNextBatchNumber(): int
     {
-        return DB::table($this->migrationsTable)
-            ->on($this->connection ?? 'default')
-            ->count() + 1;
+        $connection = $this->connection ?? DB::getDefaultConnectionName();
+        return DB::table($this->migrationsTable)->on($connection)->count() + 1;
     }
 
     protected function ensureMigrationsTable(): void

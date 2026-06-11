@@ -562,4 +562,5 @@ class MySQLDriver implements DatabaseDriverInterface
     public function beginTransaction(): void { $this->connection->beginTransaction(); }
     public function commit(): void { $this->connection->commit(); }
     public function rollBack(): void { $this->connection->rollBack(); }
+    public function inTransaction(): bool { return $this->connection->inTransaction(); }
 }

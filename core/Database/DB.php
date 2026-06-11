@@ -102,6 +102,7 @@ class DB
                     public function beginTransaction(): void {}
                     public function commit(): void {}
                     public function rollBack(): void {}
+                    public function inTransaction(): bool { return false; }
                     public function getGrammar(): Grammar { return new MySQLGrammar(); }
                 };
             default:
@@ -135,14 +136,18 @@ class DB
     { 
         self::$transactionCount--;
         if (self::$transactionCount === 0) {
-            self::connection()->commit(); 
+            if (self::connection()->inTransaction()) {
+                self::connection()->commit(); 
+            }
         }
     }
 
     public static function rollBack(): void 
     { 
         if (self::$transactionCount > 0) {
-            self::connection()->rollBack(); 
+            if (self::connection()->inTransaction()) {
+                self::connection()->rollBack(); 
+            }
             self::$transactionCount = 0; // Reset on rollback as DB transaction is closed
         }
     }

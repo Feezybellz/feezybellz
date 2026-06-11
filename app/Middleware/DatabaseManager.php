@@ -27,7 +27,7 @@ class DatabaseManager implements Middleware
         |    $host = $request->header('Host'); 
         |
         | 2. Query your 'landlord' database connection for tenant-specific details
-        |    $tenant = DB::connection('landlord')->table('tenants')->where('domain', $host)->first();
+        |    $tenant = DB::table('tenants')->on('landlord')->where('domain', $host)->first();
         |
         | 3. If found, hot-swap the 'default' connection so the app uses the tenant's DB
         |    if ($tenant) {
