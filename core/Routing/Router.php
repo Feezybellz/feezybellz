@@ -26,11 +26,19 @@ class Router
     }
 
     /**
-     * Register middleware aliases
+     * Register middleware aliases in bulk
      */
     public static function aliasMiddleware(array $aliases): void
     {
         self::$middlewareAliases = array_merge(self::$middlewareAliases, $aliases);
+    }
+
+    /**
+     * Register a single middleware alias
+     */
+    public static function registerAlias(string $name, string $class): void
+    {
+        self::$middlewareAliases[$name] = $class;
     }
 
     /**
@@ -518,9 +526,16 @@ class Router
      * @param array $params
      * @return mixed
      */
-    protected static function runMiddleware($middleware, array $params, callable $next)
+    protected static function runMiddleware($middleware, array $routeParams, callable $next)
     {
         $instance = null;
+        $middlewareParams = [];
+
+        // Parse middleware string for parameters (e.g., "throttle:60,1")
+        if (is_string($middleware) && strpos($middleware, ':') !== false) {
+            list($middleware, $paramString) = explode(':', $middleware, 2);
+            $middlewareParams = explode(',', $paramString);
+        }
 
         // Resolve aliases
         if (is_string($middleware) && isset(self::$middlewareAliases[$middleware])) {
@@ -539,7 +554,7 @@ class Router
 
         // Handle Class-based Middleware
         if ($instance && method_exists($instance, 'handle')) {
-            $response = $instance->handle(self::$request, $next);
+            $response = $instance->handle(self::$request, $next, $middlewareParams);
             
             if (!($response instanceof Response)) {
                 throw new \Exception("Middleware [" . get_class($instance) . "] must return a Response object.");

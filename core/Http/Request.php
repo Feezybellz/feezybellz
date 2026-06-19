@@ -82,6 +82,18 @@ class Request
     {
         return $this->server['HTTP_HOST'] ?? $this->server['SERVER_NAME'] ?? 'localhost';
     }
+
+    /**
+     * Get the client IP address
+     * 
+     * @return string
+     */
+    public function ip(): string
+    {
+        return $this->server['HTTP_CLIENT_IP'] ?? 
+               $this->server['HTTP_X_FORWARDED_FOR'] ?? 
+               $this->server['REMOTE_ADDR'] ?? '127.0.0.1';
+    }
     
     /**
      * Get a query parameter

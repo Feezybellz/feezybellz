@@ -48,6 +48,12 @@ class Kernel
             Router::globalMiddleware($this->middleware);
             Router::aliasMiddleware($this->routeMiddleware);
 
+            // Load App Middleware Aliases if the file exists
+            $aliasesFile = $this->app->basePath('app/Middleware/aliases.php');
+            if (file_exists($aliasesFile)) {
+                require_once $aliasesFile;
+            }
+
             Router::loadRoutesFrom($this->app->basePath('routes'));
             
             $result = Router::dispatch($request, $response);

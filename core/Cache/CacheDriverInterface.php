@@ -16,6 +16,16 @@ interface CacheDriverInterface
      */
     public function put(string $key, $value, int $ttl = 3600): bool;
     
+    /**
+     * Increment the value of an item in the cache.
+     */
+    public function increment(string $key, int $value = 1): int;
+
+    /**
+     * Decrement the value of an item in the cache.
+     */
+    public function decrement(string $key, int $value = 1): int;
+    
 
     /**
      * Determine if an item exists in the cache.

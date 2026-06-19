@@ -53,7 +53,42 @@ class FileDriver implements CacheDriverInterface
             'data' => $value
         ];
 
-        return file_put_contents($path, serialize($cache)) !== false;
+        return file_put_contents($path, serialize($cache), LOCK_EX) !== false;
+    }
+
+    public function increment(string $key, int $value = 1): int
+    {
+        $path = $this->getFilePath($key);
+
+        $fp = fopen($path, 'c+');
+        if (!$fp) return 0;
+
+        flock($fp, LOCK_EX);
+
+        $contents = stream_get_contents($fp);
+        if ($contents) {
+            $cache = unserialize($contents);
+            if (time() >= $cache['expires_at']) {
+                $cache = ['expires_at' => time() + 3600, 'data' => 0];
+            }
+        } else {
+            $cache = ['expires_at' => time() + 3600, 'data' => 0];
+        }
+
+        $cache['data'] += $value;
+
+        ftruncate($fp, 0);
+        rewind($fp);
+        fwrite($fp, serialize($cache));
+        flock($fp, LOCK_UN);
+        fclose($fp);
+
+        return $cache['data'];
+    }
+
+    public function decrement(string $key, int $value = 1): int
+    {
+        return $this->increment($key, $value * -1);
     }
 
     public function has(string $key): bool

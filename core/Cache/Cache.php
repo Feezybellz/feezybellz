@@ -61,6 +61,18 @@ class Cache
         return self::$driver->put($key, $value, $ttl);
     }
 
+    public static function increment(string $key, int $value = 1): int
+    {
+        self::init();
+        return self::$driver->increment($key, $value);
+    }
+
+    public static function decrement(string $key, int $value = 1): int
+    {
+        self::init();
+        return self::$driver->decrement($key, $value);
+    }
+
     public static function has(string $key): bool
     {
         self::init();
