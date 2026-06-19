@@ -25,7 +25,7 @@ class Container
     /**
      * Get the globally available instance of the container.
      */
-    public static function getInstance(): static
+    public static function getInstance(): self
     {
         if (is_null(static::$instance)) {
             static::$instance = new static;
@@ -37,7 +37,7 @@ class Container
     /**
      * Set the shared instance of the container.
      */
-    public static function setInstance(Container $container = null): ?Container
+    public static function setInstance(?Container $container = null): ?Container
     {
         return static::$instance = $container;
     }
@@ -65,7 +65,7 @@ class Container
     /**
      * Register an existing instance as shared in the container.
      */
-    public function instance(string $abstract, $instance): mixed
+    public function instance(string $abstract, $instance)
     {
         $this->instances[$abstract] = $instance;
 

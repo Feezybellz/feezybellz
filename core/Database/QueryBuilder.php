@@ -11,6 +11,8 @@ class QueryBuilder
     public $where = [];
     public $joins = [];
     public $orderBy = [];
+    public $groupBy = [];
+    public $having = [];
     public $limit = null;
     public $offset = null;
     public $operation = 'select';
@@ -130,6 +132,29 @@ class QueryBuilder
         return $this;
     }
 
+    public function groupBy(...$groups): self
+    {
+        foreach ($groups as $group) {
+            $this->groupBy[] = $group;
+        }
+        return $this;
+    }
+
+    public function having($column, $operator = null, $value = null, string $boolean = 'AND'): self
+    {
+        if (func_num_args() === 2) {
+            $value = $operator;
+            $operator = '=';
+        }
+        $this->having[] = compact('column', 'operator', 'value', 'boolean');
+        return $this;
+    }
+
+    public function orHaving($column, $operator = null, $value = null): self
+    {
+        return $this->having($column, $operator, $value, 'OR');
+    }
+
     public function limit(int $limit): self
     {
         $this->limit = $limit;
@@ -205,6 +230,45 @@ class QueryBuilder
     public function delete(): int
     {
         $this->operation = 'delete';
+        return (int)DB::connection($this->connection)->executeBuilder($this);
+    }
+
+    public function pluck(string $column, ?string $key = null): array
+    {
+        $this->select = $key ? [$key, $column] : [$column];
+        $results = $this->get();
+        
+        $plucked = [];
+        foreach ($results as $row) {
+            $rowArr = is_object($row) ? (array) $row : $row;
+            if ($key && isset($rowArr[$key])) {
+                $plucked[$rowArr[$key]] = $rowArr[$column] ?? null;
+            } else {
+                $plucked[] = $rowArr[$column] ?? null;
+            }
+        }
+        return $plucked;
+    }
+
+    public function value(string $column)
+    {
+        $result = $this->first();
+        if (!$result) return null;
+        $rowArr = is_object($result) ? (array) $result : $result;
+        return $rowArr[$column] ?? null;
+    }
+
+    public function increment(string $column, float $amount = 1, array $extra = []): int
+    {
+        $this->operation = 'increment';
+        $this->data = ['column' => $column, 'amount' => $amount, 'extra' => $extra];
+        return (int)DB::connection($this->connection)->executeBuilder($this);
+    }
+
+    public function decrement(string $column, float $amount = 1, array $extra = []): int
+    {
+        $this->operation = 'decrement';
+        $this->data = ['column' => $column, 'amount' => $amount, 'extra' => $extra];
         return (int)DB::connection($this->connection)->executeBuilder($this);
     }
 

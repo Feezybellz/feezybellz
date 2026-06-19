@@ -3,7 +3,7 @@
   "description": "Native PHP Framework with zero dependencies",
   "type": "project",
   "require": {
-    "php": "^8.0",
+    "php": "^7.4 || ^8.0",
     "aws/aws-sdk-php": "^3.373"
   },
   "autoload": {

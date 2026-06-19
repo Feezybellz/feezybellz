@@ -36,8 +36,8 @@ class SEOManager
     {
         // Safely integrate with your framework's config (fallback to defaults)
         $this->siteName = function_exists('config') ? config('app.name', 'My Application') : (defined('APP_NAME') ? APP_NAME : 'App');
-        $this->description = "Find and hire trusted artisans in your neighborhood with {$this->siteName}.";
-        $this->keywords = ['artisans', 'services', 'professionals'];
+        $this->description = config('app.description', "Welcome to {$this->siteName}");
+        $this->keywords = config('app.keywords', ['website', 'application']);
 
         $this->initializeDefaultSchema();
     }

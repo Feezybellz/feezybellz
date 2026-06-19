@@ -21,6 +21,8 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
     protected $queryJoins = [];
     protected $relationUnselects = [];
     protected $queryOrderBy = [];
+    protected $queryGroupBy = [];
+    protected $queryHaving = [];
     protected $queryLimit = null;
     protected $queryOffset = null;
     protected $isChaining = false;
@@ -274,6 +276,29 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
 
     protected function _limit(int $limit): self { $this->queryLimit = $limit; return $this; }
 
+    protected function _groupBy(...$groups): self
+    {
+        foreach ($groups as $group) {
+            $this->queryGroupBy[] = $group;
+        }
+        return $this;
+    }
+
+    protected function _having($column, $operator = null, $value = null, string $boolean = 'AND'): self
+    {
+        if (func_num_args() === 2) {
+            $value = $operator;
+            $operator = '=';
+        }
+        $this->queryHaving[] = compact('column', 'operator', 'value', 'boolean');
+        return $this;
+    }
+
+    protected function _orHaving($column, $operator = null, $value = null): self
+    {
+        return $this->_having($column, $operator, $value, 'OR');
+    }
+
     protected function _offset(int $offset): self { $this->queryOffset = $offset; return $this; }
 
     protected function _select($columns): self
@@ -389,7 +414,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         return $results[0] ?? null; 
     }
 
-    public function paginate(int $page = 1, int $perPage = 15): array
+    public function paginate(int $perPage = 15, int $page = 1): array
     {
         $page    = max(1, $page);
         $perPage = max(1, min(100, $perPage));
@@ -452,6 +477,111 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         $instance = new static($attributes); 
         $instance->save(); 
         return $instance; 
+    }
+
+    protected function _findOrFail($id)
+    {
+        $result = $this->_where($this->primaryKey, $id)->first();
+        if (!$result) throw new \Exception("Model not found");
+        return $result;
+    }
+
+    protected function _firstOrFail()
+    {
+        $result = $this->first();
+        if (!$result) throw new \Exception("Model not found");
+        return $result;
+    }
+
+    protected function _findMany(array $ids): array
+    {
+        if (empty($ids)) return [];
+        return $this->_whereIn($this->primaryKey, $ids)->get();
+    }
+
+    protected function _latest(string $column = 'created_at'): self
+    {
+        return $this->_orderBy($column, 'DESC');
+    }
+
+    protected function _oldest(string $column = 'created_at'): self
+    {
+        return $this->_orderBy($column, 'ASC');
+    }
+
+    public static function firstOrCreate(array $attributes, array $values = []): self
+    {
+        $query = static::query();
+        foreach ($attributes as $key => $value) {
+            $query = $query->where($key, $value);
+        }
+        $instance = $query->first();
+        if ($instance) return $instance;
+
+        return static::create(array_merge($attributes, $values));
+    }
+
+    public static function updateOrCreate(array $attributes, array $values = []): self
+    {
+        $query = static::query();
+        foreach ($attributes as $key => $value) {
+            $query = $query->where($key, $value);
+        }
+        $instance = $query->first();
+        
+        if ($instance) {
+            $instance->update($values);
+            return $instance;
+        }
+
+        return static::create(array_merge($attributes, $values));
+    }
+
+    protected function _increment(string $column, float $amount = 1, array $extra = []): int
+    {
+        if ($this->exists) {
+            $result = static::where($this->primaryKey, $this->id())->buildQuery()->increment($column, $amount, $extra);
+            $this->attributes[$column] = ($this->attributes[$column] ?? 0) + $amount;
+            foreach ($extra as $k => $v) {
+                $this->attributes[$k] = $v;
+            }
+            return $result;
+        }
+        return $this->buildQuery()->increment($column, $amount, $extra);
+    }
+
+    protected function _decrement(string $column, float $amount = 1, array $extra = []): int
+    {
+        if ($this->exists) {
+            $result = static::where($this->primaryKey, $this->id())->buildQuery()->decrement($column, $amount, $extra);
+            $this->attributes[$column] = ($this->attributes[$column] ?? 0) - $amount;
+            foreach ($extra as $k => $v) {
+                $this->attributes[$k] = $v;
+            }
+            return $result;
+        }
+        return $this->buildQuery()->decrement($column, $amount, $extra);
+    }
+
+    protected function _chunk(int $count, callable $callback): bool
+    {
+        $page = 1;
+        do {
+            $results = $this->paginate($count, $page)['data'];
+            $countResults = count($results);
+
+            if ($countResults == 0) {
+                break;
+            }
+
+            if ($callback($results, $page) === false) {
+                return false;
+            }
+
+            $page++;
+        } while ($countResults == $count);
+
+        return true;
     }
     
     /**
@@ -686,6 +816,8 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
             }
         }
         foreach ($this->queryOrderBy as $o) $builder->orderBy($o['column'], $o['direction']);
+        foreach ($this->queryGroupBy as $g) $builder->groupBy($g);
+        foreach ($this->queryHaving as $h) $builder->having($h['column'], $h['operator'], $h['value'], $h['boolean']);
         
         if ($this->isLocked) {
             $builder->lockForUpdate();

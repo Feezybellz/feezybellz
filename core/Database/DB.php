@@ -79,6 +79,12 @@ class DB
         switch (strtolower($type)) {
             case 'mysql':
                 return new MySQLDriver();
+            case 'pgsql':
+            case 'postgres':
+            case 'postgresql':
+                return new PostgreSQLDriver();
+            case 'sqlite':
+                return new SQLiteDriver();
             case 'mongodb':
             case 'mongo':
                 return new MongoDBDriver();

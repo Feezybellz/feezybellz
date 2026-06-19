@@ -5,7 +5,7 @@ namespace Framework\Core\Database;
 use PDO;
 use PDOException;
 
-class MySQLDriver implements DatabaseDriverInterface
+class PostgreSQLDriver implements DatabaseDriverInterface
 {
     protected $connection = null;
     protected $grammar = null;
@@ -13,14 +13,14 @@ class MySQLDriver implements DatabaseDriverInterface
     public function getGrammar(): Grammar
     {
         if (!$this->grammar) {
-            $this->grammar = new MySQLGrammar();
+            $this->grammar = new PostgreSQLGrammar();
         }
         return $this->grammar;
     }
     
     public function connect(array $config): void
     {
-        $dsn = "mysql:host={$config['host']};port={$config['port']};dbname={$config['database']};charset=utf8mb4";
+        $dsn = "pgsql:host={$config['host']};port={$config['port']};dbname={$config['database']}";
         try {
             $this->connection = new PDO($dsn, $config['username'], $config['password'], [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -88,7 +88,7 @@ class MySQLDriver implements DatabaseDriverInterface
     private function handleCount(QueryBuilder $builder): int
     {
         $params = [];
-        $sql = "SELECT COUNT(*) as aggregate FROM `{$builder->table}` ";
+        $sql = "SELECT COUNT(*) as aggregate FROM \"{$builder->table}\" ";
         $sql .= $this->compileJoins($builder);
         $sql .= $this->compileWhere($builder, $params);
         $res = $this->query($sql, $params)->fetch(\PDO::FETCH_ASSOC);
@@ -99,7 +99,7 @@ class MySQLDriver implements DatabaseDriverInterface
     {
         $params = [];
         $column = $builder->aggregateColumn;
-        $sql = "SELECT SUM(`{$column}`) as aggregate FROM `{$builder->table}` ";
+        $sql = "SELECT SUM(\"{$column}\") as aggregate FROM \"{$builder->table}\" ";
         $sql .= $this->compileWhere($builder, $params);
         $res = $this->query($sql, $params)->fetch(\PDO::FETCH_ASSOC);
         return (float) ($res['aggregate'] ?? 0);
@@ -109,7 +109,7 @@ class MySQLDriver implements DatabaseDriverInterface
     {
         $params = [];
         $column = $builder->aggregateColumn;
-        $sql = "SELECT AVG(`{$column}`) as aggregate FROM `{$builder->table}` ";
+        $sql = "SELECT AVG(\"{$column}\") as aggregate FROM \"{$builder->table}\" ";
         $sql .= $this->compileWhere($builder, $params);
         $res = $this->query($sql, $params)->fetch(\PDO::FETCH_ASSOC);
         return (float) ($res['aggregate'] ?? 0);
@@ -141,7 +141,7 @@ class MySQLDriver implements DatabaseDriverInterface
 
         if ($isBatch) {
             $columns = array_keys($data[0]);
-            $columnList = implode('`, `', $columns);
+            $columnList = implode('", "', $columns);
             
             $values = [];
             $params = [];
@@ -153,14 +153,14 @@ class MySQLDriver implements DatabaseDriverInterface
                 }
             }
             
-            $sql = "INSERT INTO `{$table}` (`{$columnList}`) VALUES " . implode(', ', $values);
+            $sql = "INSERT INTO \"{$table}\" (\"{$columnList}\") VALUES " . implode(', ', $values);
             $this->query($sql, $params);
             return true;
         } else {
-            $columns = implode('`, `', array_keys($data));
+            $columns = implode('", "', array_keys($data));
             $placeholders = implode(', ', array_fill(0, count($data), '?'));
             
-            $sql = "INSERT INTO `{$table}` (`{$columns}`) VALUES ({$placeholders})";
+            $sql = "INSERT INTO \"{$table}\" (\"{$columns}\") VALUES ({$placeholders})";
             $this->query($sql, array_values($data));
             
             return $this->lastInsertId();
@@ -179,12 +179,12 @@ class MySQLDriver implements DatabaseDriverInterface
         $rows = $isBatch ? $data : [$data];
         
         $columns = array_keys($rows[0]);
-        $columnList = implode('`, `', $columns);
+        $columnList = implode('", "', $columns);
         
         $updateParts = [];
         foreach ($columns as $col) {
             if (!in_array($col, $uniqueBy)) {
-                $updateParts[] = "`{$col}` = VALUES(`{$col}`)";
+                $updateParts[] = "\"{$col}\" = VALUES(\"{$col}\")";
             }
         }
         $updateSql = implode(', ', $updateParts);
@@ -199,7 +199,7 @@ class MySQLDriver implements DatabaseDriverInterface
             }
         }
         
-        $sql = "INSERT INTO `{$table}` (`{$columnList}`) VALUES " . implode(', ', $values);
+        $sql = "INSERT INTO \"{$table}\" (\"{$columnList}\") VALUES " . implode(', ', $values);
         if (!empty($updateSql)) {
             $sql .= " ON DUPLICATE KEY UPDATE {$updateSql}";
         }
@@ -216,11 +216,11 @@ class MySQLDriver implements DatabaseDriverInterface
         
         $sets = [];
         foreach ($data as $col => $val) {
-            $sets[] = "`{$col}` = ?";
+            $sets[] = "\"{$col}\" = ?";
             $params[] = $val;
         }
         
-        $sql = "UPDATE `{$table}` SET " . implode(', ', $sets);
+        $sql = "UPDATE \"{$table}\" SET " . implode(', ', $sets);
         $sql .= $this->compileWhere($builder, $params);
         
         $stmt = $this->query($sql, $params);
@@ -255,7 +255,7 @@ class MySQLDriver implements DatabaseDriverInterface
         $table = $builder->table;
         $params = [];
         
-        $sql = "DELETE FROM `{$table}`";
+        $sql = "DELETE FROM \"{$table}\"";
         $sql .= $this->compileWhere($builder, $params);
         
         $stmt = $this->query($sql, $params);
@@ -355,7 +355,7 @@ class MySQLDriver implements DatabaseDriverInterface
 
         if (!empty($builder->unselect)) {
             if (count($select) === 1 && $select[0] === '*') {
-                $stmt = $this->connection->query("SHOW COLUMNS FROM `{$builder->table}`");
+                $stmt = $this->connection->query("SELECT column_name FROM information_schema.columns WHERE table_name = '{$builder->table}'");
                 $allColumns = $stmt->fetchAll(\PDO::FETCH_COLUMN);
                 $select = array_diff($allColumns, $builder->unselect);
             } else {
@@ -370,7 +370,7 @@ class MySQLDriver implements DatabaseDriverInterface
             
             // Handle Aliases: "table.column as alias" or "column as alias" or "column alias"
             if (preg_match('/^(.+?)\s+(?:as\s+)?(\w+)$/i', $col, $matches)) {
-                return $this->getGrammar()->wrap($matches[1]) . " AS `{$matches[2]}`";
+                return $this->getGrammar()->wrap($matches[1]) . " AS \"{$matches[2]}\"";
             }
 
             return $this->getGrammar()->wrap($col);
@@ -415,9 +415,9 @@ class MySQLDriver implements DatabaseDriverInterface
 
     public function insert(string $table, array $data)
     {
-        $columns = implode('`, `', array_keys($data));
+        $columns = implode('", "', array_keys($data));
         $placeholders = implode(', ', array_fill(0, count($data), '?'));
-        $sql = "INSERT INTO " . $this->getGrammar()->wrap($table) . " (`{$columns}`) VALUES ({$placeholders})";
+        $sql = "INSERT INTO " . $this->getGrammar()->wrap($table) . " (\"{$columns}\") VALUES ({$placeholders})";
         $formattedValues = array_map([$this->getGrammar(), 'formatDate'], array_values($data));
         return $this->query($sql, $formattedValues);
     }
@@ -427,12 +427,12 @@ class MySQLDriver implements DatabaseDriverInterface
         $set = [];
         $params = [];
         foreach ($data as $key => $value) {
-            $set[] = "`{$key}` = ?";
+            $set[] = "\"{$key}\" = ?";
             $params[] = $this->getGrammar()->formatDate($value);
         }
         $whereClause = [];
         foreach ($where as $key => $value) {
-            $whereClause[] = "`{$key}` = ?";
+            $whereClause[] = "\"{$key}\" = ?";
             $params[] = $this->getGrammar()->formatDate($value);
         }
         $sql = "UPDATE " . $this->getGrammar()->wrap($table) . " SET " . implode(', ', $set) . " WHERE " . implode(' AND ', $whereClause);
@@ -444,7 +444,7 @@ class MySQLDriver implements DatabaseDriverInterface
         $whereClause = [];
         $params = [];
         foreach ($where as $key => $value) {
-            $whereClause[] = "`{$key}` = ?";
+            $whereClause[] = "\"{$key}\" = ?";
             $params[] = $value;
         }
         $sql = "DELETE FROM " . $this->getGrammar()->wrap($table) . " WHERE " . implode(' AND ', $whereClause);
@@ -472,14 +472,14 @@ class MySQLDriver implements DatabaseDriverInterface
 
         foreach ($schema->foreignKeys as $fk) {
             $constraintName = "fk_{$schema->table}_{$fk['column']}";
-            $columnDefs[] = "CONSTRAINT `{$constraintName}` FOREIGN KEY (`{$fk['column']}`) REFERENCES `{$fk['on']}`(`{$fk['references']}`) ON DELETE {$fk['onDelete']} ON UPDATE {$fk['onUpdate']}";
+            $columnDefs[] = "CONSTRAINT \"{$constraintName}\" FOREIGN KEY (\"{$fk['column']}\") REFERENCES \"{$fk['on']}\"(\"{$fk['references']}\") ON DELETE {$fk['onDelete']} ON UPDATE {$fk['onUpdate']}";
         }
 
         if ($schema->primaryKey && strpos(strtoupper(implode('', $columnDefs)), 'PRIMARY KEY') === false) {
-            $columnDefs[] = "PRIMARY KEY (`{$schema->primaryKey}`)";
+            $columnDefs[] = "PRIMARY KEY (\"{$schema->primaryKey}\")";
         }
 
-        $sql = "CREATE TABLE IF NOT EXISTS `{$table}` (" . implode(', ', $columnDefs) . ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+        $sql = "CREATE TABLE IF NOT EXISTS \"{$table}\" (" . implode(', ', $columnDefs) . ")";
         $this->query($sql);
         $this->createIndexes($schema);
     }
@@ -490,18 +490,18 @@ class MySQLDriver implements DatabaseDriverInterface
         $clauses = [];
 
         foreach ($schema->droppedColumns as $column) {
-            $clauses[] = "DROP COLUMN `{$column}`";
+            $clauses[] = "DROP COLUMN \"{$column}\"";
         }
 
         foreach ($schema->columns as $column) {
             $definition = $this->buildColumnDefinition($column);
             $action = isset($column['modify']) && $column['modify'] ? 'MODIFY COLUMN' : 'ADD COLUMN';
-            $after = isset($column['after']) ? " AFTER `{$column['after']}`" : '';
+            $after = isset($column['after']) ? " AFTER \"{$column['after']}\"" : '';
             $clauses[] = "{$action} {$definition}{$after}";
         }
 
         if (empty($clauses)) return;
-        $sql = "ALTER TABLE `{$table}` " . implode(', ', $clauses);
+        $sql = "ALTER TABLE \"{$table}\" " . implode(', ', $clauses);
         $this->query($sql);
     }
 
@@ -512,19 +512,19 @@ class MySQLDriver implements DatabaseDriverInterface
 
         switch ($type) {
             case 'ID':
-                $sqlType = "BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY";
+                $sqlType = "BIGSERIAL PRIMARY KEY";
                 break;
             case 'STRING':
                 $sqlType = "VARCHAR(" . ($col['length'] ?? 255) . ")";
                 break;
             case 'INTEGER':
-                $sqlType = ($col['unsigned'] ?? false) ? "INT UNSIGNED" : "INT";
+                $sqlType = ($col['unsigned'] ?? false) ? "INTEGER" : "INT";
                 break;
             case 'TINYINT':
-                $sqlType = ($col['unsigned'] ?? false) ? "TINYINT UNSIGNED" : "TINYINT";
+                $sqlType = ($col['unsigned'] ?? false) ? "TINYINTEGER" : "SMALLINT";
                 break;
             case 'BIG_INTEGER':
-                $sqlType = ($col['unsigned'] ?? false) ? "BIGINT UNSIGNED" : "BIGINT";
+                $sqlType = ($col['unsigned'] ?? false) ? "BIGINTEGER" : "BIGINT";
                 break;
             case 'BOOLEAN':
                 $sqlType = "TINYINT(1)";
@@ -566,7 +566,7 @@ class MySQLDriver implements DatabaseDriverInterface
                 $sqlType = $type;
         }
 
-        $definition = "`{$name}` {$sqlType}";
+        $definition = "\"{$name}\" {$sqlType}";
         $definition .= $col['nullable'] ? " NULL" : " NOT NULL";
 
         if ($col['default'] !== null) {
@@ -591,20 +591,20 @@ class MySQLDriver implements DatabaseDriverInterface
     {
         foreach (array_merge($schema->indexes, $schema->uniqueIndexes) as $index) {
             $type = (isset($index['unique']) || strpos($index['name'], 'uniq_') !== false) ? 'UNIQUE INDEX' : 'INDEX';
-            $cols = implode('`, `', $index['columns']);
-            $sql = "CREATE {$type} `{$index['name']}` ON `{$schema->table}` (`{$cols}`)";
+            $cols = implode('", "', $index['columns']);
+            $sql = "CREATE {$type} \"{$index['name']}\" ON \"{$schema->table}\" (\"{$cols}\")";
             try { $this->query($sql); } catch (\Exception $e) {}
         }
     }
 
     public function dropStorage(string $name): void
     {
-        $this->query("DROP TABLE IF EXISTS `{$name}`");
+        $this->query("DROP TABLE IF EXISTS \"{$name}\"");
     }
 
     public function ensureMigrationTracking(string $tableName): void
     {
-        $sql = "CREATE TABLE IF NOT EXISTS `{$tableName}` (
+        $sql = "CREATE TABLE IF NOT EXISTS \"{$tableName}\" (
             id INT AUTO_INCREMENT PRIMARY KEY,
             migration VARCHAR(255) NOT NULL,
             batch INT NOT NULL,
