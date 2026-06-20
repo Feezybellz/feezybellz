@@ -285,6 +285,12 @@ class Mail
                 return new SmtpDriver($this->smtpConfig);
             case 'native':
                 return new \Framework\Core\Mail\Drivers\NativeDriver();
+            case 'mailgun':
+                return new \Framework\Core\Mail\Drivers\MailgunDriver();
+            case 'ses':
+                return new \Framework\Core\Mail\Drivers\SesDriver();
+            case 'postmark':
+                return new \Framework\Core\Mail\Drivers\PostmarkDriver();
             case 'log':
             default:
                 return new \Framework\Core\Mail\Drivers\LogDriver();

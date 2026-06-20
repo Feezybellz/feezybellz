@@ -88,6 +88,9 @@ class DB
             case 'mongodb':
             case 'mongo':
                 return new MongoDBDriver();
+            case 'sqlsrv':
+            case 'sqlserver':
+                return new SQLServerDriver();
             case 'null':
                 return new class implements DatabaseDriverInterface {
                     public function connect(array $config): void {}

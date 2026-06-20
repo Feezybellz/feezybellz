@@ -582,21 +582,37 @@ class Router
             return true;
         }
 
-        if (strpos($route->subdomain, '{') !== false) {
-            $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '(?P<$1>[^.]+)', $route->subdomain);
-            $pattern = '#^' . $pattern . '#';
+        $appDomain = env('APP_DOMAIN', '');
+        $expectedSubdomain = $route->subdomain;
+
+        // If APP_DOMAIN is defined in .env, and the developer didn't already include it 
+        // in the route definition, automatically append it. (e.g., "api" becomes "api.myapp.com")
+        if ($appDomain !== '' && strpos($expectedSubdomain, $appDomain) === false) {
+            $expectedSubdomain = rtrim($expectedSubdomain, '.') . '.' . ltrim($appDomain, '.');
+        }
+
+        if (strpos($expectedSubdomain, '{') !== false) {
+            $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '(?P<$1>[^.]+)', $expectedSubdomain);
+            $pattern = '#^' . $pattern . '$#'; // Match the full host strictly
 
             if (preg_match($pattern, $host, $matches)) {
                 $subdomainParams = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
                 foreach ($subdomainParams as $key => $value) {
-                    // FIXED: Inject into Request object, not $_GET
                     self::$request->setParam('_subdomain_' . $key, $value);
                 }
                 return true;
             }
             return false;
         }
-        return strpos($host, $route->subdomain) === 0;
+
+        // If APP_DOMAIN is set, it must match the assembled domain exactly (e.g., api.myapp.com)
+        if ($appDomain !== '') {
+            return $host === $expectedSubdomain;
+        }
+
+        // Fallback if no APP_DOMAIN is set: 
+        // Ensure the host exactly matches the string OR starts with "subdomain."
+        return $host === $expectedSubdomain || strpos($host, rtrim($expectedSubdomain, '.') . '.') === 0;
     }
     
     

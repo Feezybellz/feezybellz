@@ -47,15 +47,26 @@ class Dispatcher
                 // If it's a simple closure/function
                 call_user_func($listener, $event);
             } elseif (is_string($listener) && class_exists($listener)) {
-                // If it's a dedicated Listener class, instantiate and call its handle() method
-                $instance = new $listener();
                 
-                // (Bonus!) If you later want to integrate with your existing Queue system:
-                // if (method_exists($instance, 'shouldQueue') && $instance->shouldQueue()) {
-                //     Queue::push($listener, 'handle', [$event]);
-                //     continue;
-                // }
+                // OPTIMIZATION 1: Use the Dependency Injection Container!
+                // This allows Event Listeners to auto-inject Services into their constructors.
+                if (class_exists('\Framework\Core\Container\Container')) {
+                    $instance = \Framework\Core\Container\Container::getInstance()->make($listener);
+                } else {
+                    $instance = new $listener();
+                }
+                
+                // OPTIMIZATION 2: Queue Integration!
+                // If the Listener implements 'ShouldQueue' or has a 'shouldQueue' method,
+                // we push it to the background so it doesn't slow down the HTTP request.
+                if (method_exists($instance, 'shouldQueue') && $instance->shouldQueue()) {
+                    if (class_exists('\Framework\Core\Queue\Queue')) {
+                        \Framework\Core\Queue\Queue::push([$instance, 'handle'], [$event]);
+                        continue;
+                    }
+                }
 
+                // Run it synchronously
                 if (method_exists($instance, 'handle')) {
                     $instance->handle($event);
                 }
