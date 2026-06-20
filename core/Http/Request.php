@@ -52,6 +52,14 @@ class Request
     }
     
     /**
+     * Get all route/subdomain parameters
+     */
+    public function routeParams(): array
+    {
+        return $this->params;
+    }
+    
+    /**
      * Get the request method
      * 
      * @return string

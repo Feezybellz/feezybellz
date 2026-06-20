@@ -456,9 +456,9 @@ class Router
 
                 // 2. Define the core handler (the "destination" of the pipe)
                 // Inside Router::dispatch() -> $destination closure
-                $destination = function ($request) use ($route, $params) {
-                    // 1. Execute the controller/closure
-                    $result = self::callHandler($route->handler, $params);
+                $destination = function ($request) use ($route) {
+                    // 1. Execute the controller/closure (Pass ALL params including subdomains)
+                    $result = self::callHandler($route->handler, self::$request->routeParams());
                     
                     // 2. If it's already a Response object, just return it.
                     if ($result instanceof Response) {
@@ -631,6 +631,11 @@ class Router
      */
     protected static function matchRoute(string $pattern, string $uri)
     {
+        // Support catch-all wildcard * (e.g., /route/*)
+        if (strpos($pattern, '*') !== false) {
+            $pattern = str_replace('*', '.*', $pattern);
+        }
+
         // Support custom regex in parameters: {name:regex}
         $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*):(.+?)\}/', '(?P<$1>$2)', $pattern);
         

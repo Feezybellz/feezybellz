@@ -37,6 +37,13 @@ Router::any('/tester/handle', [\App\Controllers\TesterController::class, 'handle
 
 Router::get('/tenant-test', [\App\Controllers\TenantTestController::class, 'index']);
 
+// --- WILDCARD CATCH-ALL TESTING ---
+
+// This will match /assets/css/style.css, /assets/js/app.js, etc.
+Router::get('/config/*', function(\Framework\Core\Http\Request $request) {
+    return "Sorry, you're not meant to be here!!!";
+});
+
 // --- SUBDOMAIN TESTING ---
 
 // 1. Static Subdomain Test (api.framework.net.ng)
