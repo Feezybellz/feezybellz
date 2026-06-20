@@ -127,3 +127,15 @@ If both `DatabaseManager` and `TenantMiddleware` set/reset the default connectio
 2. Hit `/tenant-test?switch_tenant=tenant1` and note results.
 3. Hit `/tenant-test?switch_tenant=tenant2` and confirm results change.
 4. Hit `/tenant-test?switch_tenant=` to return to base/default DB.
+
+## Multi-Domain Support for Routing (Subdomains)
+
+You can specify multiple application domains in your `.env` file using a comma-separated list. This is useful for handling subdomains properly across both local testing environments and production, or in cases where there's an active domain name change or alias.
+
+```env
+APP_DOMAIN=localhost,medicroster.net.ng,backup-domain.com
+```
+
+With this configured:
+- `http://localhost/` and `https://medicroster.net.ng/` will match global routes correctly without false 404s.
+- `http://client1.localhost/` and `https://client1.medicroster.net.ng/` will both correctly map the subdomain parameter `client1` to your tenant routes.

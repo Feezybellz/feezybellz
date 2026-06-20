@@ -578,30 +578,62 @@ class Router
      */
     protected static function matchSubdomain(Route $route, string $host): bool
     {
-        $appDomain = env('APP_DOMAIN', '');
+        $appDomains = array_filter(array_map('trim', explode(',', env('APP_DOMAIN', ''))));
 
         // If the route doesn't have a subdomain explicitly defined (Global Route)
         if (empty($route->subdomain)) {
             // If APP_DOMAIN is set, strictly enforce that this global route 
-            // ONLY responds to the root domain or www. (Prevents Subdomain Bleeding)
-            if ($appDomain !== '') {
-                return $host === $appDomain || $host === 'www.' . $appDomain;
+            // ONLY responds to the root domains or www. (Prevents Subdomain Bleeding)
+            if (!empty($appDomains)) {
+                foreach ($appDomains as $appDomain) {
+                    if ($host === $appDomain || $host === 'www.' . $appDomain) {
+                        return true;
+                    }
+                }
+                return false;
             }
             return true;
         }
 
         $expectedSubdomain = $route->subdomain;
 
-        // If APP_DOMAIN is defined in .env, and the developer didn't already include it 
-        // in the route definition, automatically append it. (e.g., "api" becomes "api.myapp.com")
-        if ($appDomain !== '' && strpos($expectedSubdomain, $appDomain) === false) {
-            $expectedSubdomain = rtrim($expectedSubdomain, '.') . '.' . ltrim($appDomain, '.');
+        // Helper to check a specific host against a specific root domain
+        $checkDomainMatch = function($domain) use ($expectedSubdomain, $host) {
+            $expectedFull = $expectedSubdomain;
+            if ($domain !== '' && strpos($expectedFull, $domain) === false) {
+                $expectedFull = rtrim($expectedFull, '.') . '.' . ltrim($domain, '.');
+            }
+
+            if (strpos($expectedFull, '{') !== false) {
+                $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '(?P<$1>[^.]+)', $expectedFull);
+                $pattern = '#^' . $pattern . '$#'; // Match the full host strictly
+
+                if (preg_match($pattern, $host, $matches)) {
+                    $subdomainParams = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
+                    foreach ($subdomainParams as $key => $value) {
+                        self::$request->setParam($key, $value);
+                    }
+                    return true;
+                }
+                return false;
+            }
+
+            return $host === $expectedFull;
+        };
+
+        if (!empty($appDomains)) {
+            foreach ($appDomains as $domain) {
+                if ($checkDomainMatch($domain)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
+        // Fallback if no APP_DOMAIN is set: 
         if (strpos($expectedSubdomain, '{') !== false) {
             $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '(?P<$1>[^.]+)', $expectedSubdomain);
-            $pattern = '#^' . $pattern . '$#'; // Match the full host strictly
-
+            $pattern = '#^' . $pattern . '\.#'; // Match the subdomain prefix
             if (preg_match($pattern, $host, $matches)) {
                 $subdomainParams = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
                 foreach ($subdomainParams as $key => $value) {
@@ -612,13 +644,6 @@ class Router
             return false;
         }
 
-        // If APP_DOMAIN is set, it must match the assembled domain exactly (e.g., api.myapp.com)
-        if ($appDomain !== '') {
-            return $host === $expectedSubdomain;
-        }
-
-        // Fallback if no APP_DOMAIN is set: 
-        // Ensure the host exactly matches the string OR starts with "subdomain."
         return $host === $expectedSubdomain || strpos($host, rtrim($expectedSubdomain, '.') . '.') === 0;
     }
     

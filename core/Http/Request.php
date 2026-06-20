@@ -121,13 +121,17 @@ class Request
     public function subdomain(): ?string
     {
         $host = $this->host();
-        $appDomain = env('APP_DOMAIN', '');
+        $appDomains = array_filter(array_map('trim', explode(',', env('APP_DOMAIN', ''))));
 
         // If APP_DOMAIN is set, dynamically strip it out
-        if ($appDomain !== '') {
-            $base = ltrim($appDomain, '.');
-            if (strpos($host, $base) !== false && $host !== $base && $host !== 'www.' . $base) {
-                return rtrim(str_replace($base, '', $host), '.');
+        if (!empty($appDomains)) {
+            foreach ($appDomains as $base) {
+                $base = ltrim($base, '.');
+                if (strpos($host, $base) !== false && $host !== $base && $host !== 'www.' . $base) {
+                    if (str_ends_with($host, '.' . $base)) {
+                        return rtrim(str_replace('.' . $base, '', $host), '.');
+                    }
+                }
             }
             return null;
         }
