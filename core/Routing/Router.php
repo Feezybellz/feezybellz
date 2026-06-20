@@ -578,11 +578,18 @@ class Router
      */
     protected static function matchSubdomain(Route $route, string $host): bool
     {
+        $appDomain = env('APP_DOMAIN', '');
+
+        // If the route doesn't have a subdomain explicitly defined (Global Route)
         if (empty($route->subdomain)) {
+            // If APP_DOMAIN is set, strictly enforce that this global route 
+            // ONLY responds to the root domain or www. (Prevents Subdomain Bleeding)
+            if ($appDomain !== '') {
+                return $host === $appDomain || $host === 'www.' . $appDomain;
+            }
             return true;
         }
 
-        $appDomain = env('APP_DOMAIN', '');
         $expectedSubdomain = $route->subdomain;
 
         // If APP_DOMAIN is defined in .env, and the developer didn't already include it 
@@ -598,7 +605,7 @@ class Router
             if (preg_match($pattern, $host, $matches)) {
                 $subdomainParams = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
                 foreach ($subdomainParams as $key => $value) {
-                    self::$request->setParam('_subdomain_' . $key, $value);
+                    self::$request->setParam($key, $value);
                 }
                 return true;
             }

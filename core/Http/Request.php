@@ -43,6 +43,15 @@ class Request
     }
     
     /**
+     * Get a route or subdomain parameter (e.g. {id} or {tenant})
+     * Industry Standard helper
+     */
+    public function route(string $key, $default = null)
+    {
+        return $this->params[$key] ?? $default;
+    }
+    
+    /**
      * Get the request method
      * 
      * @return string
@@ -93,6 +102,35 @@ class Request
         return $this->server['HTTP_CLIENT_IP'] ?? 
                $this->server['HTTP_X_FORWARDED_FOR'] ?? 
                $this->server['REMOTE_ADDR'] ?? '127.0.0.1';
+    }
+
+    /**
+     * Get the current subdomain (e.g., returns 'api' from 'api.myapp.com')
+     * Returns null if accessing the root domain.
+     * 
+     * @return string|null
+     */
+    public function subdomain(): ?string
+    {
+        $host = $this->host();
+        $appDomain = env('APP_DOMAIN', '');
+
+        // If APP_DOMAIN is set, dynamically strip it out
+        if ($appDomain !== '') {
+            $base = ltrim($appDomain, '.');
+            if (strpos($host, $base) !== false && $host !== $base && $host !== 'www.' . $base) {
+                return rtrim(str_replace($base, '', $host), '.');
+            }
+            return null;
+        }
+
+        // Fallback: If no APP_DOMAIN, split by dot and return the first part if it has 3+ parts
+        $parts = explode('.', $host);
+        if (count($parts) >= 3 && $parts[0] !== 'www') {
+            return $parts[0];
+        }
+
+        return null;
     }
     
     /**
