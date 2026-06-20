@@ -7,11 +7,56 @@ use Framework\Core\Container\Container;
 class Application extends Container
 {
     protected static $basePath;
+    protected array $serviceProviders = [];
+    protected bool $isBooted = false;
     
     public function __construct(string $basePath)
     {
         self::$basePath = $basePath;
         (new Handler())->register();
+    }
+
+    /**
+     * Register configured service providers from config/app.php
+     */
+    public function registerConfiguredProviders(): void
+    {
+        $appConfigPath = $this->configPath('app.php');
+        $providers = [];
+
+        if (file_exists($appConfigPath)) {
+            $appConfig = require $appConfigPath;
+            $providers = $appConfig['providers'] ?? [];
+        }
+
+        foreach ($providers as $providerClass) {
+            $this->registerProvider(new $providerClass($this));
+        }
+    }
+
+    /**
+     * Register a single service provider
+     */
+    public function registerProvider(\Framework\Core\Support\ServiceProvider $provider): void
+    {
+        $provider->register();
+        $this->serviceProviders[] = $provider;
+    }
+
+    /**
+     * Boot all registered service providers
+     */
+    public function boot(): void
+    {
+        if ($this->isBooted) {
+            return;
+        }
+
+        foreach ($this->serviceProviders as $provider) {
+            $provider->boot();
+        }
+
+        $this->isBooted = true;
     }
     
     /**

@@ -127,16 +127,28 @@ class Request
         return $this->post[$key] ?? $default;
     }
 
-    /**
-     * Determine if the request contains a given input item.
-     * 
-     * @param string $key
-     * @return bool
-     */
     public function has(string $key): bool
     {
         $input = $this->all();
         return isset($input[$key]);
+    }
+
+    /**
+     * Validate the request data against the given rules.
+     * 
+     * @param array $rules
+     * @return array The validated and sanitized data
+     * @throws \Framework\Core\Exceptions\ValidationException
+     */
+    public function validate(array $rules): array
+    {
+        $validator = \Framework\Core\Validation\Validator::make($this->all(), $rules);
+
+        if ($validator->fails()) {
+            throw new \Framework\Core\Exceptions\ValidationException($validator->errors());
+        }
+
+        return $validator->validated();
     }
 
     /**

@@ -64,14 +64,60 @@ class Handler
         $statusCode = $this->getStatusCode($e);
         $response->setStatusCode($statusCode);
 
-        // If it's an API request (JSON expected), return JSON
-        if ($request->wantsJson() || strpos($request->uri(), '/api/') === 0) {
+        // If it's an API request (JSON expected) or forced via .env, return JSON
+        if ($this->shouldReturnJson($request, $e)) {
+            if ($e instanceof ValidationException) {
+                $response->setStatusCode(422);
+                $response->json([
+                    'message' => $e->getMessage(),
+                    'errors' => $e->getErrors()
+                ]);
+                $response->send();
+                exit;
+            }
             $this->renderJson($e, $response, $statusCode);
             return;
         }
 
+        // Handle Form Validation failures for Web Routes
+        if ($e instanceof ValidationException) {
+            $referer = $_SERVER['HTTP_REFERER'] ?? '/';
+            // Assuming we have Session available via Container or static access
+            if (class_exists('\Framework\Core\Http\Session')) {
+                \Framework\Core\Http\Session::flash('errors', $e->getErrors());
+                \Framework\Core\Http\Session::flash('old', $request->all());
+            }
+            $response->setStatusCode(302);
+            $response->setHeader('Location', $referer);
+            $response->send();
+            exit;
+        }
+
         // Otherwise, render an HTML error page
         $this->renderHtml($e, $response, $statusCode);
+    }
+
+    /**
+     * Determine if the exception should be rendered as JSON.
+     */
+    protected function shouldReturnJson(Request $request, \Throwable $e): bool
+    {
+        // 1. Check if the developer explicitly forced JSON globally via .env
+        if (filter_var(env('APP_FORCE_JSON', false), FILTER_VALIDATE_BOOLEAN)) {
+            return true;
+        }
+
+        // 2. Check if the client explicitly requested JSON via headers
+        if ($request->wantsJson()) {
+            return true;
+        }
+
+        // 3. Check if the request is hitting an API route
+        if (strpos($request->uri(), '/api/') === 0) {
+            return true;
+        }
+
+        return false;
     }
 
     protected function renderCli(\Throwable $e): void

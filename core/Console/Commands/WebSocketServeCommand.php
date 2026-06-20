@@ -260,6 +260,25 @@ $server->on('connection', function($data, $socket) {
                 $reply($data['data']);
             }
         });
+
+        // ── Internal Server Triggers (From Sync PHP) ─────────────────
+        $server->on('broadcast', function($payload) use ($server) {
+            $event = $payload['data']['event'] ?? 'message';
+            $data = $payload['data']['payload'] ?? [];
+            
+            foreach ($server->getClients() as $client) {
+                $client->emit($event, $data);
+            }
+        });
+
+        $server->on('room_broadcast', function($payload) use ($server) {
+            $room = $payload['data']['room'] ?? null;
+            $event = $payload['data']['event'] ?? 'message';
+            $data = $payload['data']['payload'] ?? [];
+            
+            if ($room && $server->hasRoom($room)) {
+                $server->getRoom($room)->broadcast($event, $data);
+            }
+        });
     }
-    
 }

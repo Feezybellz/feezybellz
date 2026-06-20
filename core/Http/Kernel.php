@@ -54,6 +54,21 @@ class Kernel
                 require_once $aliasesFile;
             }
 
+            // Built-in framework asset routes
+            Router::get('/websocket.js', function (\Framework\Core\Http\Request $request, \Framework\Core\Http\Response $response) {
+                $path = base_path('core/WebSocket/websocket.js');
+                if (file_exists($path)) {
+                    $response->setHeader('Content-Type', 'application/javascript');
+                    $response->setHeader('Cache-Control', 'no-cache, must-revalidate'); // Ensure changes load immediately
+                    $response->setContent(file_get_contents($path));
+                    return $response;
+                }
+                $response->setStatusCode(404);
+                $response->setContent('WebSocket Client Script not found.');
+                return $response;
+            });
+
+            // Load application routes
             Router::loadRoutesFrom($this->app->basePath('routes'));
             
             $result = Router::dispatch($request, $response);
@@ -70,11 +85,18 @@ class Kernel
      */
     protected function bootstrap(Request $request): void
     {
-        // 1. Register Core Services
+        // 1. Register Core Services manually (Legacy)
         $this->registerServices();
 
-        // 2. Load Events
-        Dispatcher::register(require $this->app->basePath('config/events.php'));
+        // 2. Register & Boot all Service Providers!
+        $this->app->registerConfiguredProviders();
+        $this->app->boot();
+
+        // 3. Load Events
+        $eventsPath = $this->app->basePath('config/events.php');
+        if (file_exists($eventsPath)) {
+            Dispatcher::register(require $eventsPath);
+        }
     }
 
     /**
@@ -82,8 +104,6 @@ class Kernel
      */
     protected function registerServices(): void
     {
-        // For now, we'll register Session directly here. 
-        // Later we can use ServiceProviders for a more modular approach.
         $this->app->singleton(SessionDriverInterface::class, PHPSessionDriver::class);
         $this->app->singleton(Session::class);
     }

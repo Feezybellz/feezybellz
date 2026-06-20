@@ -9,10 +9,21 @@ class Event
     protected $name = null; // New property for the identifier
     protected $id = null; // New property for the identifier
     protected $description = '';
+    protected $withoutOverlapping = false;
+    protected $mutexFile = '';
 
     public function __construct($callback)
     {
         $this->callback = $callback;
+    }
+
+    /**
+     * Do not allow this task to overlap if it is already running.
+     */
+    public function withoutOverlapping(): self
+    {
+        $this->withoutOverlapping = true;
+        return $this;
     }
 
     /**
@@ -123,6 +134,25 @@ class Event
      */
     public function run()
     {
-        return call_user_func($this->callback);
+        if ($this->withoutOverlapping) {
+            $this->mutexFile = sys_get_temp_dir() . '/schedule_mutex_' . md5($this->id ?: $this->name ?: spl_object_hash($this)) . '.lock';
+            
+            $fileHandle = fopen($this->mutexFile, 'c');
+            if (!flock($fileHandle, LOCK_EX | LOCK_NB)) {
+                // Another instance holds the lock
+                fclose($fileHandle);
+                return false; 
+            }
+        }
+
+        try {
+            return call_user_func($this->callback);
+        } finally {
+            if ($this->withoutOverlapping && isset($fileHandle)) {
+                flock($fileHandle, LOCK_UN);
+                fclose($fileHandle);
+                @unlink($this->mutexFile);
+            }
+        }
     }
 }

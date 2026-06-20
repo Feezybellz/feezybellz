@@ -626,8 +626,48 @@ class Router
     }
     
     /**
-     * Call the route handler
-     * * @param callable|array|string $handler
+     * Resolve dependencies for a route handler using Reflection
+     */
+    protected static function resolveDependencies($callable, array $routeParams): array
+    {
+        $dependencies = [];
+        $reflection = is_array($callable) 
+            ? new \ReflectionMethod($callable[0], $callable[1]) 
+            : (is_object($callable) && !$callable instanceof \Closure ? new \ReflectionMethod($callable, '__invoke') : new \ReflectionFunction($callable));
+
+        foreach ($reflection->getParameters() as $param) {
+            $name = $param->getName();
+            $type = $param->getType();
+
+            if ($type && !$type->isBuiltin()) {
+                $className = $type->getName();
+                if ($className === \Framework\Core\Http\Request::class) {
+                    $dependencies[] = self::$request;
+                } elseif ($className === \Framework\Core\Http\Response::class) {
+                    $dependencies[] = self::$response;
+                } elseif (self::$container && self::$container->has($className)) {
+                    $dependencies[] = self::$container->make($className);
+                } else {
+                    $dependencies[] = self::$container ? self::$container->make($className) : new $className();
+                }
+            } elseif (array_key_exists($name, $routeParams)) {
+                $dependencies[] = $routeParams[$name];
+            } elseif ($name === 'params') {
+                $dependencies[] = $routeParams;
+            } elseif ($param->isDefaultValueAvailable()) {
+                $dependencies[] = $param->getDefaultValue();
+            } else {
+                throw new \Exception("Cannot resolve dependency for [\${$name}] in route handler.");
+            }
+        }
+
+        return $dependencies;
+    }
+
+    /**
+     * Call the handler with automatic dependency injection
+     * 
+     * @param callable|array|string $handler
      * @param array $params
      * @return mixed
      */
@@ -637,28 +677,26 @@ class Router
         if (is_array($handler)) {
             [$controller, $method] = $handler;
             
-            // Instantiate controller if it's a class name
             if (is_string($controller)) {
-                // USE CONTAINER TO INSTANTIATE
                 $controller = self::$container ? self::$container->make($controller) : new $controller();
             }
             
-            return $controller->{$method}(self::$request, self::$response, $params);
+            $args = self::resolveDependencies([$controller, $method], $params);
+            return $controller->{$method}(...$args);
         }
         
         // If handler is a class name string
         if (is_string($handler) && class_exists($handler)) {
-            // USE CONTAINER TO INSTANTIATE
             $instance = self::$container ? self::$container->make($handler) : new $handler();
             
-            // Try __invoke method first
             if (method_exists($instance, '__invoke')) {
-                return $instance(self::$request, self::$response, $params);
+                $args = self::resolveDependencies([$instance, '__invoke'], $params);
+                return $instance(...$args);
             }
             
-            // Try handle method
             if (method_exists($instance, 'handle')) {
-                return $instance->handle(self::$request, self::$response);
+                $args = self::resolveDependencies([$instance, 'handle'], $params);
+                return $instance->handle(...$args);
             }
             
             throw new \Exception("Handler class {$handler} must have __invoke or handle method");
@@ -666,17 +704,20 @@ class Router
         
         // If handler is a callable/closure
         if (is_callable($handler)) {
-            return $handler(self::$request, self::$response, $params);
+            $args = self::resolveDependencies($handler, $params);
+            return $handler(...$args);
         }
         
         // If handler is an object
         if (is_object($handler)) {
             if (method_exists($handler, '__invoke')) {
-                return $handler(self::$request, self::$response, $params);
+                $args = self::resolveDependencies([$handler, '__invoke'], $params);
+                return $handler(...$args);
             }
             
             if (method_exists($handler, 'handle')) {
-                return $handler->handle(self::$request, self::$response);
+                $args = self::resolveDependencies([$handler, 'handle'], $params);
+                return $handler->handle(...$args);
             }
         }
         

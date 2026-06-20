@@ -6,6 +6,17 @@ use Framework\Core\Http\Request;
 
 class TenantManager
 {
+    /** @var \Closure|null */
+    protected static $resolver = null;
+
+    /**
+     * Register a custom callback to resolve the tenant dynamically.
+     */
+    public static function resolveUsing(\Closure $callback): void
+    {
+        self::$resolver = $callback;
+    }
+
     /**
      * Resolve and boot the correct tenant database
      */
@@ -15,9 +26,20 @@ class TenantManager
         $host = $request->host();
         $subdomain = explode('.', $host)[0];
 
+        // 2. Allow Developer to Override Resolution Logic
+        if (self::$resolver !== null) {
+            $resolver = self::$resolver;
+            $connectionDetails = $resolver($subdomain, $request);
+            
+            if (is_array($connectionDetails)) {
+                DB::addConnection('default', $connectionDetails);
+            }
+            return;
+        }
+
         $config = config('db');
 
-        // 2. Priority 1: Check Static Config (Fastest)
+        // 3. Priority 1: Check Static Config (Fastest)
         if (isset($config['static_tenants'][$subdomain])) {
             DB::addConnection('default', $config['static_tenants'][$subdomain]);
             return;

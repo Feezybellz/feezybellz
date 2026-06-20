@@ -238,13 +238,40 @@ class Mail
         return $result;
     }
 
-    public function queue(): bool
+    public function queue($mailable = null): bool
     {
-        // Integration with your Queue system
-        if (class_exists('\Framework\Core\Queue\QueueClient')) {
-            return \Framework\Core\Queue\QueueClient::dispatch([$this, 'send'], [])['success'];
+        if ($mailable instanceof Mailable) {
+            $this->subject = $mailable->subject;
+            $this->view = $mailable->view;
+            $this->viewData = $mailable->viewData;
+            $this->content = $mailable->content;
+            $this->isHtml = $mailable->isHtml;
+            $this->attachments = $mailable->attachments;
+            if (!empty($mailable->fromData)) {
+                $this->from = $mailable->fromData;
+            }
         }
-        return $this->send();
+
+        // Integration with the new Queue system
+        if (class_exists('\Framework\Core\Queue\Queue')) {
+            // Because Queue closures/objects aren't easily json_encoded, we pass the data to a generic worker
+            $payload = [
+                'to' => $this->to,
+                'from' => $this->from,
+                'subject' => $this->subject,
+                'view' => $this->view,
+                'viewData' => $this->viewData,
+                'content' => $this->content,
+                'isHtml' => $this->isHtml,
+                'attachments' => $this->attachments,
+                'driverType' => $this->driverType
+            ];
+
+            return \Framework\Core\Queue\Queue::push([\Framework\Core\Mail\SendQueuedMailJob::class, 'handle'], [$payload]);
+        }
+        
+        // Fallback to synchronous sending
+        return $this->send($mailable);
     }
 
     // =========================================================

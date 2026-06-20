@@ -27,6 +27,12 @@ class Cache
             case 'file':
                 self::$driver = new FileDriver($config['stores']['file'] ?? []);
                 break;
+            case 'redis':
+                self::$driver = new Drivers\RedisDriver($config['stores']['redis'] ?? []);
+                break;
+            case 'memcached':
+                self::$driver = new Drivers\MemcachedDriver($config['stores']['memcached'] ?? []);
+                break;
             default:
                 throw new \Exception("Cache driver [{$defaultDriver}] is not supported.");
         }

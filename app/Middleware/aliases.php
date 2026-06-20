@@ -15,6 +15,7 @@ use Framework\Core\Routing\Router;
 
 Router::aliasMiddleware([
     'throttle' => \Framework\Core\Http\Middleware\ThrottleRequests::class,
+    'waf'      => \Framework\Core\Http\Middleware\WafMiddleware::class,
     'csrf'     => \App\Middleware\CsrfMiddleware::class,
     'cors'     => \App\Middleware\CorsMiddleware::class,
 ]);

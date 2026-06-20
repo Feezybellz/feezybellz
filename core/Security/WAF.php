@@ -18,8 +18,6 @@ class WAF
     ];
 
     protected static $config = [
-        'rate_limit'     => 100,
-        'time_window'    => 60,
         'block_duration' => 3600,
         'block_driver'   => 'file',
         'table_name'     => 'blocked_ips'
@@ -28,7 +26,7 @@ class WAF
     protected static $lastMessage = null;
 
     /**
-     * Static Factory: Ensures WAF::setBlockDriver() returns an instance for -> chaining
+     * Static Factory: Ensures WAF::setBlockDriver() returns an instance for chaining
      */
     public static function __callStatic($name, $arguments)
     {
@@ -36,16 +34,7 @@ class WAF
         if (method_exists($instance, $name)) {
             return $instance->$name(...$arguments);
         }
-    }
-
-    /**
-     * Configuration: Rate Limiting (Returns $this for chaining)
-     */
-    public function setRateLimit(int $limit, int $window): self
-    {
-        self::$config['rate_limit'] = $limit;
-        self::$config['time_window'] = $window;
-        return $this;
+        throw new \BadMethodCallException("Method {$name} does not exist on WAF.");
     }
 
     /**
@@ -71,6 +60,22 @@ class WAF
     }
 
     /**
+     * Alias for validate()
+     */
+    public function scan(Request $request): bool
+    {
+        return $this->validate($request);
+    }
+
+    /**
+     * Alias for validate()
+     */
+    public function check(Request $request): bool
+    {
+        return $this->validate($request);
+    }
+
+    /**
      * Validation: returns true if safe, false if malicious
      */
     public function validate(Request $request): bool
@@ -82,10 +87,8 @@ class WAF
             return false;
         }
 
-        if (!self::checkRateLimit($ip)) {
-            self::blockIP($ip, "Rate Limit Exceeded");
-            return false;
-        }
+        // We explicitly omit rate limiting here (ThrottleRequests handles that).
+        // Only checking malicious payloads.
 
         $data = array_merge($request->all(), $request->query(), $_COOKIE);
         if (self::recursiveScan($data)) {
@@ -96,26 +99,20 @@ class WAF
         return true;
     }
 
-    public function getMessage(): ?string
+    public static function getMessage(): ?string
     {
         return self::$lastMessage;
-    }
-
-    protected static function checkRateLimit(string $ip): bool
-    {
-        $key = "waf_rate_" . md5($ip);
-        $hits = (int)Cache::get($key, 0);
-        if ($hits >= self::$config['rate_limit']) return false;
-        Cache::set($key, $hits + 1, self::$config['time_window']);
-        return true;
     }
 
     private static function recursiveScan($data): bool
     {
         if (is_array($data)) {
-            foreach ($data as $v) { if (self::recursiveScan($v)) return true; }
+            foreach ($data as $v) { 
+                if (self::recursiveScan($v)) return true; 
+            }
             return false;
         }
+        
         foreach (self::$rules as $type => $regex) {
             if (preg_match($regex, (string)$data)) {
                 self::$lastMessage = $type;
@@ -129,47 +126,65 @@ class WAF
     {
         self::$lastMessage = $reason;
         $expiry = date('Y-m-d H:i:s', time() + self::$config['block_duration']);
+        $host = $_SERVER['HTTP_HOST'] ?? 'global';
+        $cacheKey = "blocked_{$host}_{$ip}";
         
         if (self::$config['block_driver'] === 'db') {
-            DB::table(self::$config['table_name'])->insert([
-                'ip_address' => $ip, 
-                'reason' => $reason, 
-                'expires_at' => $expiry, 
-                'created_at' => date('Y-m-d H:i:s')
-            ]);
+            try {
+                DB::table(self::$config['table_name'])->insert([
+                    'ip_address' => $ip, 
+                    'reason' => $reason, 
+                    'expires_at' => $expiry, 
+                    'created_at' => date('Y-m-d H:i:s')
+                ]);
+            } catch (\Exception $e) {
+                // Fallback to cache if DB fails
+                Cache::set($cacheKey, $reason, self::$config['block_duration']);
+            }
         } else {
-            Cache::set("blocked_$ip", $reason, self::$config['block_duration']);
+            Cache::set($cacheKey, $reason, self::$config['block_duration']);
         }
-        Log::error("WAF Blocking: $reason", ['ip' => $ip]);
+        
+        if (class_exists('\Framework\Core\Logging\Log')) {
+            Log::error("WAF Blocking: $reason", ['ip' => $ip, 'host' => $host]);
+        }
     }
 
     protected static function isBlocked(string $ip): bool
     {
         if (self::$config['block_driver'] === 'db') {
             try {
+                // If the table check fails (doesn't exist), we just assume false.
                 $check = DB::table(self::$config['table_name'])
                     ->where('ip_address', '=', $ip)
                     ->where('expires_at', '>', date('Y-m-d H:i:s'))
                     ->first();
                 return !empty($check);
             } catch (\Exception $e) {
-                // Fail safe if table still doesn't exist
                 return false; 
             }
         }
-        return Cache::has("blocked_$ip");
+        
+        $host = $_SERVER['HTTP_HOST'] ?? 'global';
+        return Cache::has("blocked_{$host}_{$ip}");
     }
 
     /**
-     * FIXED: Correct Polyglot Schema implementation
+     * Creates the table but caches the check so it doesn't kill performance.
      */
     protected static function ensureTableExists(string $tableName): void
     {
+        $host = $_SERVER['HTTP_HOST'] ?? 'global';
+        // PERFORMANCE FIX: Only check once an hour max per server instance, scoped by TENANT HOST
+        $cacheKey = "waf_table_exists_{$host}_{$tableName}";
+        if (Cache::has($cacheKey)) {
+            return;
+        }
+
         try {
             $driver = DB::connection(); 
             $schema = new Schema($tableName, $driver);
 
-            // Use the Schema fluent API to define metadata
             $schema->id();
             $schema->string('ip_address', 45)->unique();
             $schema->string('reason');
@@ -177,51 +192,18 @@ class WAF
             $schema->timestamps();
             $schema->index(['ip_address', 'expires_at']); 
 
-            // Hand over the blueprint to the driver for execution
             $schema->create(); 
             
+            Cache::set($cacheKey, true, 3600); // Remember for 1 hour
         } catch (\Exception $e) {
-            // Log only real errors, ignore "table already exists"
-            if (strpos($e->getMessage(), 'already exists') === false && 
-                strpos($e->getMessage(), '1050') === false) {
-                Log::error("WAF Schema Error: " . $e->getMessage());
+            // If it already exists, that's fine, cache it!
+            if (strpos($e->getMessage(), 'already exists') !== false || strpos($e->getMessage(), '1050') !== false) {
+                Cache::set($cacheKey, true, 3600);
+            } else {
+                if (class_exists('\Framework\Core\Logging\Log')) {
+                    Log::error("WAF Schema Error: " . $e->getMessage());
+                }
             }
         }
     }
 }
-
-/* ============================
-Usage
-
-use Framework\Core\Security\WAF;
-
-WAF::check($request);
-
-or 
-
-WAF::setBlockDriver('db')
-   ->setRateLimit(20, 10) // 20 requests per 10 seconds
-   ->setBlockDuration(7200) // 2 hour block
-   ->scan($request);
-
-or
-
-WAF::scan($request)->setBlockDuration(86400); // 24 hour block
-
-or 
-
-$waf = new WAF();
-$waf->setBlockDriver('db');
-$waf->setRateLimit(50, 60);
-$waf->scan($request);
-
-
-or 
-
-WAF::setRateLimit(10, 60)->scan($request);
-
-or 
-
-WAF::check($request)->setBlockDuration(3600);
-
-============================ */
