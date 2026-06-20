@@ -675,6 +675,10 @@ class Router
                 }
             } elseif (array_key_exists($name, $routeParams)) {
                 $dependencies[] = $routeParams[$name];
+            } elseif ($name === 'request') {
+                $dependencies[] = self::$request;
+            } elseif ($name === 'response') {
+                $dependencies[] = self::$response;
             } elseif ($name === 'params') {
                 $dependencies[] = $routeParams;
             } elseif ($param->isDefaultValueAvailable()) {

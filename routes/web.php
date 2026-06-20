@@ -41,8 +41,13 @@ Router::get('/tenant-test', [\App\Controllers\TenantTestController::class, 'inde
 
 // 1. Static Subdomain Test (api.framework.net.ng)
 Router::group(['subdomain' => 'api'], function() {
-    Router::get('/', function() {
-        return ['status' => 'success', 'message' => 'You have successfully hit the API subdomain!'];
+    Router::get('/', function($request, $response) {
+        // return ['status' => 'success', 'message' => 'You have successfully hit the API subdomain!'];
+        Response::json([
+            'status' => 'success',
+            'message' => 'You have successfully hit the API subdomain!'
+        ])->send();
+        
     });
     
     Router::get('/ping', function() {
