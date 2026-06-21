@@ -582,6 +582,12 @@ if(!function_exists('app_path')) {
     }
 }
 
+if(!function_exists('public_path')) {
+    function public_path(string $path = ''): string {
+        return dirname(__DIR__) . '/public/' . ltrim($path, '/');
+    }
+}
+
 if (!function_exists('recursive_format_dates')) {
     /**
      * Recursively find and format strings matching Y-m-d H:i:s to ISO 8601 UTC

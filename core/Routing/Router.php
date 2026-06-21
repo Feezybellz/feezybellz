@@ -612,6 +612,11 @@ class Router
 
         $expectedSubdomain = $route->subdomain;
 
+        // If a subdomain route is defined but APP_DOMAIN is not set, throw an error
+        if (empty($appDomains)) {
+            throw new \Exception('APP_DOMAIN must be set in your .env file to use subdomain routing.');
+        }
+
         // Helper to check a specific host against a specific root domain
         $checkDomainMatch = function($domain) use ($expectedSubdomain, $host) {
             $expectedFull = $expectedSubdomain;
@@ -636,30 +641,12 @@ class Router
             return $host === $expectedFull;
         };
 
-        if (!empty($appDomains)) {
-            foreach ($appDomains as $domain) {
-                if ($checkDomainMatch($domain)) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        // Fallback if no APP_DOMAIN is set: 
-        if (strpos($expectedSubdomain, '{') !== false) {
-            $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '(?P<$1>[^.]+)', $expectedSubdomain);
-            $pattern = '#^' . $pattern . '\.#'; // Match the subdomain prefix
-            if (preg_match($pattern, $host, $matches)) {
-                $subdomainParams = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
-                foreach ($subdomainParams as $key => $value) {
-                    self::$request->setParam($key, $value);
-                }
+        foreach ($appDomains as $domain) {
+            if ($checkDomainMatch($domain)) {
                 return true;
             }
-            return false;
         }
-
-        return $host === $expectedSubdomain || strpos($host, rtrim($expectedSubdomain, '.') . '.') === 0;
+        return false;
     }
     
     

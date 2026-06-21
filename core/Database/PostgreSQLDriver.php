@@ -593,7 +593,7 @@ class PostgreSQLDriver implements DatabaseDriverInterface
             if ($col['default'] === 'CURRENT_TIMESTAMP') {
                 $definition .= " DEFAULT CURRENT_TIMESTAMP";
             } elseif ($col['default'] === 'CURRENT_TIMESTAMP_ON_UPDATE') {
-                $definition .= " DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP";
+                $definition .= " DEFAULT CURRENT_TIMESTAMP";
             } else {
                 $val = is_string($col['default']) ? "'{$col['default']}'" : $col['default'];
                 if (is_bool($col['default'])) $val = $col['default'] ? '1' : '0';
@@ -625,7 +625,7 @@ class PostgreSQLDriver implements DatabaseDriverInterface
     public function ensureMigrationTracking(string $tableName): void
     {
         $sql = "CREATE TABLE IF NOT EXISTS \"{$tableName}\" (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+            id SERIAL PRIMARY KEY,
             migration VARCHAR(255) NOT NULL,
             batch INT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
