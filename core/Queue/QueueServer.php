@@ -165,6 +165,16 @@ class QueueServer
      */
     private $maxJobsBeforeRestart = 10000;
 
+    /**
+     * Maximum number of concurrent connections
+     */
+    private $maxClients = 100;
+
+    public function setMaxClients(int $max): void
+    {
+        $this->maxClients = max(1, $max);
+    }
+
     /** @var int Total jobs received since startup. */
     private $totalJobsReceived = 0;
 
@@ -640,6 +650,15 @@ class QueueServer
      */
     private function acceptNewConnection(): void
     {
+        if (count($this->clientSockets) >= $this->maxClients) {
+            $rejected = @stream_socket_accept($this->serverSocket, 0);
+            if ($rejected !== false) {
+                @fclose($rejected);
+            }
+            $this->log("Rejected connection: max clients ({$this->maxClients}) reached");
+            return;
+        }
+
         // stream_socket_accept() does the TCP three-way handshake.
         // The @ suppresses warnings from race conditions (client
         // disconnects between select() and accept()).
@@ -846,7 +865,7 @@ class QueueServer
 
     // ── Step 4: Generate a unique job ID ────────────────────────────────
     $this->totalJobsReceived++;
-    $jobId = 'job_' . $this->totalJobsReceived . '_' . substr(md5(uniqid('', true)), 0, 8);
+    $jobId = sprintf('job_%d_%x', $this->totalJobsReceived, mt_rand());
 
     // ── Step 5: Enqueue ─────────────────────────────────────────────────
     $job = [

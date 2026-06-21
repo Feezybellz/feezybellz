@@ -423,7 +423,8 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         $total = $this->buildQuery()->count();
 
         // Apply pagination to the model state and fetch
-        $this->_limit($perPage)->_offset($offset);
+        $this->queryLimit = $perPage;
+        $this->queryOffset = $offset;
         
         $builder = $this->buildQuery();
         $models = [];

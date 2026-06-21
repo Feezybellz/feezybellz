@@ -22,6 +22,10 @@ class WebSocketServer
     private $internalSocket;
     private $internalPort;
 
+    private $maxBufferSize = 1048576;     // 1MB per client
+    private $maxPendingFrames = 100;
+    private $maxConnections = 10000;
+
     public function __construct(string $host = '0.0.0.0', int $port = 8080, int $internalPort = 8081)
     {
         $this->host = $host;
@@ -46,6 +50,13 @@ class WebSocketServer
     {
         $this->pingInterval = $interval;
         $this->pingTimeout = $timeout;
+    }
+
+    public function setLimits(int $maxBufferSize = 1048576, int $maxPendingFrames = 100, int $maxConnections = 10000): void
+    {
+        $this->maxBufferSize = $maxBufferSize;
+        $this->maxPendingFrames = $maxPendingFrames;
+        $this->maxConnections = $maxConnections;
     }
 
     /**
@@ -218,6 +229,14 @@ class WebSocketServer
      */
     private function handleNewConnection($socket): void
     {
+        if (count($this->clients) >= $this->maxConnections) {
+            $this->log("Max connections ({$this->maxConnections}) reached, rejecting new connection");
+            if (is_resource($socket)) {
+                fclose($socket);
+            }
+            return;
+        }
+
         $clientId = uniqid('client_', true);
         $resourceId = (int) $socket;
 
@@ -250,6 +269,11 @@ class WebSocketServer
         // Pre-handshake: the first message is always an HTTP upgrade request.
         if (!$client['handshake']) {
             $client['buffer'] .= $data;
+            if (strlen($client['buffer']) > $this->maxBufferSize) {
+                $this->log("Buffer overflow for {$clientId} (" . strlen($client['buffer']) . " bytes), disconnecting");
+                $this->disconnect($clientId);
+                return;
+            }
             
             // 🔒 SECURITY CHECK: Detect TLS handshake on a non-SSL port
             if (!$this->isSSL() && strlen($client['buffer']) >= 3) {
@@ -338,6 +362,11 @@ class WebSocketServer
 
         if ($frame['fin'] === 0) {
             // Non-final fragment — accumulate
+            if (count($client['pendingFrames']) >= $this->maxPendingFrames) {
+                $this->log("Too many pending frames for {$clientId}, disconnecting");
+                $this->disconnect($clientId);
+                return;
+            }
             $client['pendingFrames'][] = $frame['payload'];
             return;
         }

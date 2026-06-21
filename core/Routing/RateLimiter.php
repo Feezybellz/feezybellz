@@ -28,12 +28,10 @@ class RateLimiter
     {
         $timerKey = $key . ':timer';
 
-        if (!Cache::has($timerKey)) {
-            Cache::put($timerKey, time() + $decaySeconds, $decaySeconds);
-        }
-
+        // Single increment operation (atomic in Redis/Memcached, file-locked in FileDriver)
         $hits = Cache::increment($key);
 
+        // Only set the timer on the first hit (when counter was just created)
         if ($hits === 1) {
             Cache::put($timerKey, time() + $decaySeconds, $decaySeconds);
         }

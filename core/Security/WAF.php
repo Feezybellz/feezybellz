@@ -90,8 +90,11 @@ class WAF
         // We explicitly omit rate limiting here (ThrottleRequests handles that).
         // Only checking malicious payloads.
 
-        $data = array_merge($request->all(), $request->query(), $_COOKIE);
-        if (self::recursiveScan($data)) {
+        // Fast path: flatten all input into a single string to avoid recursive array iteration
+        // and reduce preg_match calls drastically.
+        $payload = json_encode([$request->all(), $request->query(), $_COOKIE]);
+        
+        if (self::scanString($payload)) {
             self::blockIP($ip, "Malicious Pattern Detected: " . self::$lastMessage);
             return false;
         }
@@ -104,17 +107,10 @@ class WAF
         return self::$lastMessage;
     }
 
-    private static function recursiveScan($data): bool
+    private static function scanString(string $data): bool
     {
-        if (is_array($data)) {
-            foreach ($data as $v) { 
-                if (self::recursiveScan($v)) return true; 
-            }
-            return false;
-        }
-        
         foreach (self::$rules as $type => $regex) {
-            if (preg_match($regex, (string)$data)) {
+            if (preg_match($regex, $data)) {
                 self::$lastMessage = $type;
                 return true;
             }

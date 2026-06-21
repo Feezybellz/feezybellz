@@ -10,6 +10,7 @@ class Route
     public $subdomain = null;
     public $middleware = [];
     public $name = null;
+    public $compiledPattern = null;
     
     public function __construct(string $method, string $path, $handler)
     {

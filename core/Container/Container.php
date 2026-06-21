@@ -100,32 +100,41 @@ class Container
         return $object;
     }
 
+    protected $reflectionCache = [];
+
     /**
      * Instantiate a concrete instance and auto-inject its dependencies.
      */
     protected function build(string $concrete, array $parameters = [])
     {
-        try {
-            $reflector = new ReflectionClass($concrete);
-        } catch (\ReflectionException $e) {
-            throw new Exception("Target class [$concrete] does not exist.", 0, $e);
+        if (!isset($this->reflectionCache[$concrete])) {
+            try {
+                $reflector = new ReflectionClass($concrete);
+            } catch (\ReflectionException $e) {
+                throw new Exception("Target class [$concrete] does not exist.", 0, $e);
+            }
+
+            $constructor = $reflector->getConstructor();
+            $this->reflectionCache[$concrete] = [
+                'reflector' => $reflector,
+                'constructor' => $constructor,
+                'params' => $constructor ? $constructor->getParameters() : [],
+            ];
         }
 
-        if (!$reflector->isInstantiable()) {
+        $cached = $this->reflectionCache[$concrete];
+
+        if (!$cached['reflector']->isInstantiable()) {
             throw new Exception("Target [$concrete] is not instantiable.");
         }
 
-        $constructor = $reflector->getConstructor();
-
-        // If there is no constructor, just instantiate it directly.
-        if (is_null($constructor)) {
+        if (is_null($cached['constructor'])) {
             return new $concrete;
         }
 
-        $dependencies = $constructor->getParameters();
-        $instances = $this->resolveDependencies($dependencies, $parameters);
+        $instances = $this->resolveDependencies($cached['params'], $parameters);
 
-        return $reflector->newInstanceArgs($instances);
+        return $cached['reflector']->newInstanceArgs($instances);
     }
 
     /**

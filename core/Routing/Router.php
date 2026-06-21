@@ -16,6 +16,9 @@ class Router
     protected static $response = null;
     protected static $container = null;
     protected static $errorHandler = null;
+    protected static $routesSorted = false;
+    protected static $reflectionCache = [];
+    protected static $parsedAppDomains = null;
 
     /**
      * Register global middleware
@@ -341,6 +344,8 @@ class Router
             }
         }
         
+        $route->compiledPattern = self::compilePattern($route->path);
+        self::$routesSorted = false;
         self::$routes[] = $route;
         
         return $route;
@@ -429,14 +434,16 @@ class Router
         $requestHost = self::$request->host();
         
         // Sort routes: literal paths match before parameterized ones
-        $sortedRoutes = self::$routes;
-        usort($sortedRoutes, function (Route $a, Route $b) {
-            $aParams = substr_count($a->path, '{');
-            $bParams = substr_count($b->path, '{');
-            return $aParams <=> $bParams;
-        });
+        if (!self::$routesSorted) {
+            usort(self::$routes, function (Route $a, Route $b) {
+                $aParams = substr_count($a->path, '{');
+                $bParams = substr_count($b->path, '{');
+                return $aParams <=> $bParams;
+            });
+            self::$routesSorted = true;
+        }
         
-        foreach ($sortedRoutes as $route) {
+        foreach (self::$routes as $route) {
             if ($route->method !== 'ANY' && $route->method !== $requestMethod) {
                 continue;
             }
@@ -446,7 +453,7 @@ class Router
                 continue;
             }
             
-            $params = self::matchRoute($route->path, $requestUri);
+            $params = self::matchRoute($route->compiledPattern, $requestUri);
             
             if ($params !== false) {
                 // 1. Hydrate the Request object with route parameters
@@ -576,9 +583,17 @@ class Router
      * @param string $host
      * @return bool
      */
+    protected static function getAppDomains(): array
+    {
+        if (self::$parsedAppDomains === null) {
+            self::$parsedAppDomains = array_filter(array_map('trim', explode(',', env('APP_DOMAIN', ''))));
+        }
+        return self::$parsedAppDomains;
+    }
+
     protected static function matchSubdomain(Route $route, string $host): bool
     {
-        $appDomains = array_filter(array_map('trim', explode(',', env('APP_DOMAIN', ''))));
+        $appDomains = self::getAppDomains();
 
         // If the route doesn't have a subdomain explicitly defined (Global Route)
         if (empty($route->subdomain)) {
@@ -654,21 +669,18 @@ class Router
      * @param string $uri
      * @return array|false
      */
-    protected static function matchRoute(string $pattern, string $uri)
+    protected static function compilePattern(string $pattern): string
     {
-        // Support catch-all wildcard * (e.g., /route/*)
         if (strpos($pattern, '*') !== false) {
             $pattern = str_replace('*', '.*', $pattern);
         }
-
-        // Support custom regex in parameters: {name:regex}
         $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*):(.+?)\}/', '(?P<$1>$2)', $pattern);
-        
-        // Convert standard route pattern to regex: {name}
         $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '(?P<$1>[^/]+)', $pattern);
-        
-        $pattern = '#^' . $pattern . '$#';
-        
+        return '#^' . $pattern . '$#';
+    }
+
+    protected static function matchRoute(string $pattern, string $uri)
+    {
         if (preg_match($pattern, $uri, $matches)) {
             // Extract named parameters
             $params = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
@@ -684,9 +696,16 @@ class Router
     protected static function resolveDependencies($callable, array $routeParams): array
     {
         $dependencies = [];
-        $reflection = is_array($callable) 
-            ? new \ReflectionMethod($callable[0], $callable[1]) 
-            : (is_object($callable) && !$callable instanceof \Closure ? new \ReflectionMethod($callable, '__invoke') : new \ReflectionFunction($callable));
+        $cacheKey = is_array($callable)
+            ? (is_object($callable[0]) ? get_class($callable[0]) : $callable[0]) . '::' . $callable[1]
+            : (is_object($callable) && !$callable instanceof \Closure ? get_class($callable) . '::__invoke' : spl_object_id($callable));
+
+        if (!isset(self::$reflectionCache[$cacheKey])) {
+            self::$reflectionCache[$cacheKey] = is_array($callable) 
+                ? new \ReflectionMethod($callable[0], $callable[1]) 
+                : (is_object($callable) && !$callable instanceof \Closure ? new \ReflectionMethod($callable, '__invoke') : new \ReflectionFunction($callable));
+        }
+        $reflection = self::$reflectionCache[$cacheKey];
 
         foreach ($reflection->getParameters() as $param) {
             $name = $param->getName();
@@ -789,6 +808,7 @@ class Router
     {
         self::$routes = [];
         self::$groupStack = [];
+        self::$routesSorted = false;
     }
     
     /**

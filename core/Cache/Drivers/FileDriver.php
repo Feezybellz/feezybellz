@@ -93,6 +93,29 @@ class FileDriver implements CacheDriverInterface
 
     public function has(string $key): bool
     {
+        $path = $this->getFilePath($key);
+
+        if (!file_exists($path)) {
+            return false;
+        }
+
+        // Optimization: read only the first 32 bytes to extract expiration time
+        // The serialized array starts like: a:2:{s:10:"expires_at";i:1680000000;
+        $fp = fopen($path, 'r');
+        if (!$fp) return false;
+        
+        $header = fread($fp, 64);
+        fclose($fp);
+        
+        if (preg_match('/"expires_at";i:(\d+);/', $header, $matches)) {
+            if (time() >= (int)$matches[1]) {
+                $this->forget($key);
+                return false;
+            }
+            return true;
+        }
+        
+        // Fallback for unexpected formats
         return $this->get($key) !== null;
     }
 

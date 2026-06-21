@@ -131,34 +131,19 @@ class DB
         return self::connection()->{$method}(...$args);
     }
 
-    protected static $transactionCount = 0;
-
     public static function beginTransaction(): void 
     { 
-        if (self::$transactionCount === 0) {
-            self::connection()->beginTransaction(); 
-        }
-        self::$transactionCount++;
+        self::connection()->beginTransaction(); 
     }
 
     public static function commit(): void 
     { 
-        self::$transactionCount--;
-        if (self::$transactionCount === 0) {
-            if (self::connection()->inTransaction()) {
-                self::connection()->commit(); 
-            }
-        }
+        self::connection()->commit(); 
     }
 
     public static function rollBack(): void 
     { 
-        if (self::$transactionCount > 0) {
-            if (self::connection()->inTransaction()) {
-                self::connection()->rollBack(); 
-            }
-            self::$transactionCount = 0; // Reset on rollback as DB transaction is closed
-        }
+        self::connection()->rollBack(); 
     }
 
     /**

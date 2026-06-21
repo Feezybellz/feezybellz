@@ -7,8 +7,10 @@ use PDOException;
 
 class PostgreSQLDriver implements DatabaseDriverInterface
 {
+    protected $config = [];
     protected $connection = null;
     protected $grammar = null;
+    protected $transactionDepth = 0;
 
     public function getGrammar(): Grammar
     {
@@ -20,6 +22,7 @@ class PostgreSQLDriver implements DatabaseDriverInterface
     
     public function connect(array $config): void
     {
+        $this->config = $config;
         $dsn = "pgsql:host={$config['host']};port={$config['port']};dbname={$config['database']}";
         try {
             $this->connection = new PDO($dsn, $config['username'], $config['password'], [
@@ -32,27 +35,44 @@ class PostgreSQLDriver implements DatabaseDriverInterface
         }
     }
 
+    private function isConnectionLost(PDOException $e): bool
+    {
+        $code = $e->getCode();
+        $message = $e->getMessage();
+        return in_array($code, ['HY000', '2006', '2013', '08S01', '08006']) || strpos($message, 'server has gone away') !== false;
+    }
+
+    private function reconnect(): void
+    {
+        if (!empty($this->config)) {
+            $this->connect($this->config);
+        }
+    }
+
     public function query(string $query, array $params = [])
     {
         try {
-            // Pre-process parameters to handle specific types (like booleans)
-            // that don't cast well to strings in PDO::execute()
-            foreach ($params as $key => $value) {
-                if (is_bool($value)) {
-                    $params[$key] = $value ? 1 : 0;
-                }
-            }
-
-            $statement = $this->connection->prepare($query);
-            $statement->execute($params);
-            return $statement;
+            return $this->executeQuery($query, $params);
         } catch (PDOException $e) {
-            // Log the error for the administrator
+            if ($this->isConnectionLost($e)) {
+                $this->reconnect();
+                return $this->executeQuery($query, $params);
+            }
             error_log("Database Error: " . $e->getMessage() . " | Query: " . $query);
-            
-            // Re-throw a cleaner exception for the framework
             throw new \Exception("Database Error: " . $e->getMessage());
         }
+    }
+
+    private function executeQuery(string $query, array $params = [])
+    {
+        foreach ($params as $key => $value) {
+            if (is_bool($value)) {
+                $params[$key] = $value ? 1 : 0;
+            }
+        }
+        $statement = $this->connection->prepare($query);
+        $statement->execute($params);
+        return $statement;
     }
 
     public function executeBuilder(QueryBuilder $builder)
@@ -613,8 +633,30 @@ class PostgreSQLDriver implements DatabaseDriverInterface
         $this->query($sql);
     }
 
-    public function beginTransaction(): void { $this->connection->beginTransaction(); }
-    public function commit(): void { $this->connection->commit(); }
-    public function rollBack(): void { $this->connection->rollBack(); }
+    public function beginTransaction(): void 
+    { 
+        if ($this->transactionDepth === 0) {
+            $this->connection->beginTransaction(); 
+        }
+        $this->transactionDepth++;
+    }
+
+    public function commit(): void 
+    { 
+        $this->transactionDepth--;
+        if ($this->transactionDepth === 0 && $this->connection->inTransaction()) {
+            $this->connection->commit(); 
+        }
+    }
+
+    public function rollBack(): void 
+    { 
+        if ($this->transactionDepth > 0) {
+            if ($this->connection->inTransaction()) {
+                $this->connection->rollBack(); 
+            }
+            $this->transactionDepth = 0;
+        }
+    }
     public function inTransaction(): bool { return $this->connection->inTransaction(); }
 }
