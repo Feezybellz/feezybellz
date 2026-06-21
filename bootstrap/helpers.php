@@ -584,7 +584,7 @@ if(!function_exists('app_path')) {
 
 if(!function_exists('public_path')) {
     function public_path(string $path = ''): string {
-        return dirname(__DIR__) . '/public/' . ltrim($path, '/');
+        return \Framework\Core\Application::publicPath($path);
     }
 }
 

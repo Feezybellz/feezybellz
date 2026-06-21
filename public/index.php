@@ -16,6 +16,9 @@ $app = new Application(dirname(__DIR__));
 $app->instance(Application::class, $app);
 $app->instance(\Framework\Core\Container\Container::class, $app);
 
+// Tell the Application where the public folder is (dynamically sets it to the folder this index.php is in)
+Application::usePublicPath(__DIR__);
+
 // 2. Resolve the Kernel
 $kernel = $app->make(Kernel::class);
 

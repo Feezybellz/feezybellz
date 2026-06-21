@@ -7,6 +7,7 @@ use Framework\Core\Container\Container;
 class Application extends Container
 {
     protected static $basePath;
+    protected static $customPublicPath = null;
     protected array $serviceProviders = [];
     protected bool $isBooted = false;
     
@@ -104,6 +105,16 @@ class Application extends Container
     }
     
     /**
+     * Set a custom public path
+     * 
+     * @param string $path
+     */
+    public static function usePublicPath(string $path): void
+    {
+        self::$customPublicPath = rtrim($path, '/\\');
+    }
+
+    /**
      * Get the public path
      * 
      * @param string $path
@@ -111,6 +122,7 @@ class Application extends Container
      */
     public static function publicPath(string $path = ''): string
     {
-        return self::basePath('public') . ($path ? DIRECTORY_SEPARATOR . $path : '');
+        $basePublic = self::$customPublicPath ?: self::basePath('public');
+        return $basePublic . ($path ? DIRECTORY_SEPARATOR . ltrim($path, '/\\') : '');
     }
 }
