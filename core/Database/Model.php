@@ -396,8 +396,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         return (bool)$this->save();
     }
 
-    public function count(): int { return $this->buildQuery()->count(); }
-    public function _count(): int { return $this->count(); }
+    protected function _count(): int { return $this->buildQuery()->count(); }
     protected function _exists($id = null): bool
     {
         if ($id !== null) {
@@ -405,16 +404,16 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         }
         return $this->buildQuery()->exists();
     }
-    public function sum(string $column): float { return $this->buildQuery()->sum($column); }
-    public function _sum(string $column): float { return $this->sum($column); }
+    protected function _sum(string $column): float { return $this->buildQuery()->sum($column); }
+    
 
-    public function first(): ?self 
+    protected function _first(): ?self 
     {  
         $results = $this->_limit(1)->get(); 
         return $results[0] ?? null; 
     }
 
-    public function paginate(int $perPage = 15, int $page = 1): array
+    protected function _paginate(int $perPage = 15, int $page = 1): array
     {
         $page    = max(1, $page);
         $perPage = max(1, min(100, $perPage));
@@ -537,6 +536,11 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         return static::create(array_merge($attributes, $values));
     }
 
+    public static function createOrUpdate(array $attributes, array $values = []): self
+    {
+        return static::updateOrCreate($attributes, $values);
+    }
+
     protected function _increment(string $column, float $amount = 1, array $extra = []): int
     {
         if ($this->exists) {
@@ -605,7 +609,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
     // RELATIONSHIPS
     // =========================================================
 
-    public function with(string ...$relations): self
+    protected function _with(string ...$relations): self
     {
         $this->eagerLoad = array_merge($this->eagerLoad, $relations);
         return $this;
@@ -783,7 +787,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
 
     public static function findBy(string $column, $value): ?self { return static::where($column, $value)->first(); }
 
-    public function get(): array
+    protected function _get(): array
     {
         $builder = $this->buildQuery();
 

@@ -52,7 +52,20 @@ class Migrator
                 $instance->setConnection($this->connection);
             }
 
-            $instance->up();
+            try {
+                $instance->up();
+            } catch (\Exception $e) {
+                // If it's a "Duplicate column" or "Table already exists" error, we consider it a warning and proceed
+                $msg = $e->getMessage();
+                if (stripos($msg, 'already exists') !== false || stripos($msg, 'Duplicate column') !== false) {
+                    if (php_sapi_name() === 'cli') {
+                        echo "\033[33m  [WARNING] {$name} - " . trim(str_replace('Database Error:', '', $msg)) . "\033[0m\n";
+                    }
+                } else {
+                    // Rethrow critical errors
+                    throw $e;
+                }
+            }
 
             if ($this->connection) {
                 DB::setDefaultConnection($previousConnection);

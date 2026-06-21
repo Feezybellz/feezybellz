@@ -201,13 +201,13 @@ if (!function_exists('db')) {
 
 if (!function_exists('config')) {
     /**
-     * Get a configuration value
+     * Get or Set a configuration value
      * 
-     * @param string $key Configuration key in dot notation
+     * @param string|array|null $key Configuration key in dot notation, or array to set
      * @param mixed $default Default value if not found
      * @return mixed
      */
-    function config(string $key, $default = null)
+    function config($key = null, $default = null)
     {
         static $config = [];
         
@@ -220,6 +220,25 @@ if (!function_exists('config')) {
                     $config[$name] = require $file;
                 }
             }
+        }
+
+        if (is_null($key)) {
+            return $config;
+        }
+
+        if (is_array($key)) {
+            foreach ($key as $k => $v) {
+                $keys = explode('.', $k);
+                $reference = &$config;
+                foreach ($keys as $segment) {
+                    if (!isset($reference[$segment]) || !is_array($reference[$segment])) {
+                        $reference[$segment] = [];
+                    }
+                    $reference = &$reference[$segment];
+                }
+                $reference = $v;
+            }
+            return true;
         }
         
         // Parse dot notation
