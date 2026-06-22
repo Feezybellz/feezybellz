@@ -112,4 +112,164 @@ class S3Driver implements StorageDriverInterface
             'headers' => $request->getHeaders(),
         ];
     }
+
+    public function move(string $from, string $to): bool
+    {
+        try {
+            $this->client->copyObject([
+                'Bucket' => $this->bucket,
+                'CopySource' => "{$this->bucket}/{$from}",
+                'Key' => $to,
+            ]);
+            
+            $this->client->deleteObject([
+                'Bucket' => $this->bucket,
+                'Key' => $from,
+            ]);
+            return true;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    public function copy(string $from, string $to): bool
+    {
+        try {
+            $this->client->copyObject([
+                'Bucket' => $this->bucket,
+                'CopySource' => "{$this->bucket}/{$from}",
+                'Key' => $to,
+            ]);
+            return true;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    public function size(string $path): int
+    {
+        try {
+            $head = $this->client->headObject(['Bucket' => $this->bucket, 'Key' => $path]);
+            return (int) $head['ContentLength'];
+        } catch (\Exception $e) {
+            return 0;
+        }
+    }
+
+    public function lastModified(string $path): int
+    {
+        try {
+            $head = $this->client->headObject(['Bucket' => $this->bucket, 'Key' => $path]);
+            return strtotime($head['LastModified']);
+        } catch (\Exception $e) {
+            return 0;
+        }
+    }
+
+    public function mimeType(string $path)
+    {
+        try {
+            $head = $this->client->headObject(['Bucket' => $this->bucket, 'Key' => $path]);
+            return $head['ContentType'];
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    public function files(string $directory): array
+    {
+        $directory = rtrim($directory, '/') . '/';
+        try {
+            $results = $this->client->listObjectsV2([
+                'Bucket' => $this->bucket,
+                'Prefix' => $directory,
+                'Delimiter' => '/'
+            ]);
+            $files = [];
+            if (isset($results['Contents'])) {
+                foreach ($results['Contents'] as $object) {
+                    if ($object['Key'] !== $directory) {
+                        $files[] = $object['Key'];
+                    }
+                }
+            }
+            return $files;
+        } catch (\Exception $e) {
+            return [];
+        }
+    }
+
+    public function directories(string $directory): array
+    {
+        $directory = rtrim($directory, '/') . '/';
+        try {
+            $results = $this->client->listObjectsV2([
+                'Bucket' => $this->bucket,
+                'Prefix' => $directory,
+                'Delimiter' => '/'
+            ]);
+            $dirs = [];
+            if (isset($results['CommonPrefixes'])) {
+                foreach ($results['CommonPrefixes'] as $prefix) {
+                    $dirs[] = rtrim($prefix['Prefix'], '/');
+                }
+            }
+            return $dirs;
+        } catch (\Exception $e) {
+            return [];
+        }
+    }
+
+    public function deleteDirectory(string $directory): bool
+    {
+        $directory = rtrim($directory, '/') . '/';
+        try {
+            $results = $this->client->listObjectsV2([
+                'Bucket' => $this->bucket,
+                'Prefix' => $directory,
+            ]);
+            
+            if (empty($results['Contents'])) return true;
+            
+            $objects = array_map(function($object) {
+                return ['Key' => $object['Key']];
+            }, $results['Contents']);
+            
+            $this->client->deleteObjects([
+                'Bucket' => $this->bucket,
+                'Delete' => ['Objects' => $objects],
+            ]);
+            return true;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    public function readStream(string $path)
+    {
+        try {
+            $result = $this->client->getObject([
+                'Bucket' => $this->bucket,
+                'Key' => $path,
+            ]);
+            return $result['Body']->detach();
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    public function writeStream(string $path, $resource): bool
+    {
+        try {
+            $this->client->putObject([
+                'Bucket' => $this->bucket,
+                'Key' => $path,
+                'Body' => $resource,
+            ]);
+            return true;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
 }
