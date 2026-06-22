@@ -39,6 +39,7 @@ class Mail
     protected $attachments = [];
     protected $debug = false;
     protected $lastError = null;
+    protected $shouldLog = false;
 
     public function __construct()
     {
@@ -83,6 +84,12 @@ class Mail
     public function debug(bool $value = true): self
     {
         $this->debug = $value;
+        return $this;
+    }
+
+    public function logMail(bool $value = true): self
+    {
+        $this->shouldLog = $value;
         return $this;
     }
 
@@ -218,10 +225,10 @@ class Mail
         }
 
         // Audit Log
-        if (function_exists('storage_path')) {
+        if ($this->shouldLog && function_exists('storage_path')) {
             $logDir = storage_path('logs');
             if (!is_dir($logDir)) {
-                mkdir($logDir, 0777, true);
+                @mkdir($logDir, 0777, true);
             }
 
             $logMsg = sprintf(
@@ -232,7 +239,11 @@ class Mail
                 $result ? 'SUCCESS' : 'FAILURE',
                 $this->lastError ? "({$this->lastError})" : ""
             );
-            file_put_contents($logDir . '/mail_audit.log', $logMsg, FILE_APPEND);
+            try {
+                file_put_contents($logDir . '/mail_audit.log', $logMsg, FILE_APPEND);
+            } catch (\Exception $e) {
+                // Ignore audit log permission errors
+            }
         }
 
         return $result;
