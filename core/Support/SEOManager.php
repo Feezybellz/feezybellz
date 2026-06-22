@@ -71,7 +71,7 @@ class SEOManager
 
     public function setTitle(string $title, bool $overwrite = true): self 
     {
-        $this->title = $title . ' — ' . $this->siteName;
+        $this->title = $title . ' | ' . $this->siteName;
         if (empty($this->ogTitle) || $overwrite) $this->ogTitle = $this->title;
         return $this;
     }
