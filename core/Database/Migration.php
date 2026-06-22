@@ -43,6 +43,14 @@ abstract class Migration
         $schema->alter();
     }
 
+    /**
+     * Alias for alterTable to match standard framework conventions
+     */
+    protected function table(string $table, callable $callback): void
+    {
+        $this->alterTable($table, $callback);
+    }
+
     protected function dropTable(string $table): void
     {
         $this->db->dropStorage($table);

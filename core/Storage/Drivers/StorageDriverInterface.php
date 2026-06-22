@@ -38,3 +38,4 @@ interface StorageDriverInterface
      * Get a temporary, pre-signed URL to upload a file.
      */
     public function temporaryUploadUrl(string $path, \DateTimeInterface $expiration, array $options = []): array;
+}

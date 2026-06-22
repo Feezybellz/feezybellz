@@ -343,4 +343,62 @@ class Schema
     {
         $this->db->alterStorage($this);
     }
+
+    // =========================================================
+    // STATIC UTILITIES (Inspection & Safe Drops)
+    // =========================================================
+
+    public static function hasTable(string $table): bool
+    {
+        $db = DB::connection();
+        try {
+            // Standard approach across most SQL databases
+            $result = $db->query("SELECT 1 FROM `{$table}` LIMIT 1");
+            return true;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    public static function hasColumn(string $table, string $column): bool
+    {
+        if (!self::hasTable($table)) return false;
+
+        $db = DB::connection();
+        try {
+            // MySQL Specific check
+            $stmt = $db->query("SHOW COLUMNS FROM `{$table}` LIKE '{$column}'");
+            // If the PDO statement returns records, the column exists
+            $result = method_exists($stmt, 'fetchAll') ? $stmt->fetchAll() : [];
+            return count($result) > 0;
+        } catch (\Exception $e) {
+            // Fallback for non-MySQL or drivers that don't support SHOW COLUMNS
+            try {
+                $db->query("SELECT `{$column}` FROM `{$table}` LIMIT 1");
+                return true;
+            } catch (\Exception $e2) {
+                return false;
+            }
+        }
+    }
+
+    public static function dropIfExists(string $table): void
+    {
+        if (self::hasTable($table)) {
+            DB::connection()->dropStorage($table);
+        }
+    }
+
+    public static function dropColumnIfExists(string $table, string $column): void
+    {
+        if (self::hasColumn($table, $column)) {
+            $db = DB::connection();
+            // Wrap in try-catch in case the active driver doesn't support basic ALTER TABLE syntax
+            try {
+                $db->query("ALTER TABLE `{$table}` DROP COLUMN `{$column}`");
+            } catch (\Exception $e) {
+                // Ignore failure if column could not be dropped
+            }
+        }
+    }
 }

@@ -4,7 +4,7 @@ namespace Framework\Core\Database;
 
 class QueryBuilder
 {
-    public $connection = 'default';
+    public $connection;
     public $table;
     public $select = ['*'];
     public $unselect = [];
@@ -28,7 +28,7 @@ class QueryBuilder
      */
     public function on(?string $connection): self
     {
-        $this->connection = $connection ?? 'default';
+        $this->connection = $connection ?? DB::getDefaultConnectionName();
         return $this;
     }
 
@@ -177,17 +177,26 @@ class QueryBuilder
 
     public function get(): array
     {
+        if (empty($this->connection)) {
+            $this->connection = DB::getDefaultConnectionName();
+        }
         $result = DB::connection($this->connection)->executeBuilder($this);
         return is_array($result) ? $result : [];
     }
 
     public function execute()
     {
+        if (empty($this->connection)) {
+            $this->connection = DB::getDefaultConnectionName();
+        }
         return DB::connection($this->connection)->executeBuilder($this);
     }
 
     public function first()
     {
+        if (empty($this->connection)) {
+            $this->connection = DB::getDefaultConnectionName();
+        }
         $this->limit(1);
         $result = $this->get();
         return $result[0] ?? null;
@@ -195,12 +204,18 @@ class QueryBuilder
 
     public function count(): int
     {
+        if (empty($this->connection)) {
+            $this->connection = DB::getDefaultConnectionName();
+        }
         $this->operation = 'count';
         return DB::connection($this->connection)->executeBuilder($this);
     }
 
     public function sum(string $column): float
     {
+        if (empty($this->connection)) {
+            $this->connection = DB::getDefaultConnectionName();
+        }
         $this->operation = 'sum';
         $this->aggregateColumn = $column;
         return (float)DB::connection($this->connection)->executeBuilder($this);
@@ -208,6 +223,9 @@ class QueryBuilder
 
     public function avg(string $column): float
     {
+        if (empty($this->connection)) {
+            $this->connection = DB::getDefaultConnectionName();
+        }
         $this->operation = 'avg';
         $this->aggregateColumn = $column;
         return (float)DB::connection($this->connection)->executeBuilder($this);
@@ -215,6 +233,9 @@ class QueryBuilder
 
     public function insert(array $data)
     {
+        if (empty($this->connection)) {
+            $this->connection = DB::getDefaultConnectionName();
+        }
         $this->operation = 'insert';
         $this->data = $data;
         return DB::connection($this->connection)->executeBuilder($this);
@@ -222,6 +243,9 @@ class QueryBuilder
 
     public function update(array $data): int
     {
+        if (empty($this->connection)) {
+            $this->connection = DB::getDefaultConnectionName();
+        }
         $this->operation = 'update';
         $this->data = $data;
         return (int)DB::connection($this->connection)->executeBuilder($this);
@@ -229,6 +253,9 @@ class QueryBuilder
 
     public function delete(): int
     {
+        if (empty($this->connection)) {
+            $this->connection = DB::getDefaultConnectionName();
+        }
         $this->operation = 'delete';
         return (int)DB::connection($this->connection)->executeBuilder($this);
     }
@@ -274,6 +301,9 @@ class QueryBuilder
 
     public function exists(): bool
     {
+        if (empty($this->connection)) {
+            $this->connection = DB::getDefaultConnectionName();
+        }
         return $this->count() > 0;
     }
 }
