@@ -43,20 +43,17 @@ if (file_exists($composerAutoload)) {
 require __DIR__ . '/helpers.php';
 env();
 
-// Initialize database connections
-use Framework\Core\Database\DB;
-
 // Set application timezone
 date_default_timezone_set(config('app.timezone', 'UTC'));
 
+// Database connection *configs* are registered here (cheap) but the drivers
+// are NOT built until DB::connection() is first called. This matters for
+// CLI commands like `make:*` that never touch the database — they no longer
+// pay the connection-setup cost. See DB::connection() for the lazy path.
+use Framework\Core\Database\DB;
 $dbConfig = config('db');
 if ($dbConfig && isset($dbConfig['connections'])) {
     foreach ($dbConfig['connections'] as $name => $connection) {
-        try {
-            DB::addConnection($name, $connection);
-        } catch (Exception $e) {
-            // Silently fail if connection cannot be established
-            // This allows the app to run even if DB is not configured
-        }
+        DB::addConnection($name, $connection);
     }
 }

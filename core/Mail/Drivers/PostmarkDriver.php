@@ -8,9 +8,12 @@ class PostmarkDriver implements MailDriverInterface
 {
     protected string $token;
 
-    public function __construct()
+    public function __construct(array $config = [])
     {
-        $this->token = env('POSTMARK_TOKEN', '');
+        // Same pattern as MailgunDriver: explicit config wins, then
+        // config('mail.postmark.*'), then empty. env() is not read here.
+        $cfg = $config + (array) (function_exists('config') ? config('mail.postmark') : []);
+        $this->token = (string) ($cfg['token'] ?? '');
     }
 
     public function send($to, string $subject, string $body, array $headers = [], array $attachments = [], bool $isHtml = true): bool
@@ -22,7 +25,9 @@ class PostmarkDriver implements MailDriverInterface
         $url = 'https://api.postmarkapp.com/email';
 
         $payload = [
-            'From' => $headers['From'] ?? env('MAIL_FROM_ADDRESS', 'system@localhost'),
+            'From' => $headers['From']
+                       ?? (function_exists('config') ? config('mail.from.address') : null)
+                       ?? 'system@localhost',
             'To' => is_array($to) ? implode(',', $to) : $to,
             'Subject' => $subject,
         ];

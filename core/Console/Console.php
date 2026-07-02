@@ -58,6 +58,9 @@ class Console
             'migrate'          => Commands\MigrateCommand::class,
             'migrate:rollback' => Commands\MigrateRollbackCommand::class,
             'db:seed'          => Commands\SeedCommand::class,
+            'route:cache'      => Commands\RouteCacheCommand::class,
+            'route:uncache'    => Commands\RouteClearCommand::class,
+            'route:clear'      => Commands\RouteClearCommand::class, // alias of route:uncache
             'serve'            => Commands\ServeCommand::class,
             'websocket:serve'  => Commands\WebSocketServeCommand::class,
             

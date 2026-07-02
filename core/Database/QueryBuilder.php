@@ -112,6 +112,26 @@ class QueryBuilder
 
     public function whereRaw(string $sql, array $params = [], string $boolean = 'AND'): self
     {
+        // Dev-mode foot-gun detector. Anything that looks like a variable
+        // interpolation, superglobal reference, or request-sourced input
+        // in a raw SQL fragment is almost always a bug. Only fires in
+        // APP_DEBUG=true so production traffic isn't slowed.
+        if (function_exists('config') && config('app.debug')) {
+            $suspicious = ['$_GET', '$_POST', '$_REQUEST', '$_COOKIE',
+                           'request->', 'input(', 'query(', 'post(', '{$'];
+            foreach ($suspicious as $needle) {
+                if (strpos($sql, $needle) !== false) {
+                    trigger_error(
+                        "whereRaw() contains a user-sourced substring ({$needle}). "
+                        . "Use parameter bindings (the second arg) — the interpolated "
+                        . "value is a SQL injection vector.",
+                        E_USER_WARNING
+                    );
+                    break;
+                }
+            }
+        }
+
         $this->where[] = [
             'type' => 'raw',
             'sql' => $sql,
@@ -126,9 +146,35 @@ class QueryBuilder
         return $this->whereRaw($sql, $params, 'OR');
     }
 
+    /**
+     * Append a raw expression to the SELECT list. Caller owns the SQL.
+     * Wrap expression in parens already-quoted so Grammar::wrap() passes it through.
+     */
+    public function selectRaw(string $expression): self
+    {
+        $this->select[] = '(' . $expression . ')';
+        return $this;
+    }
+
     public function orderBy(string $column, string $direction = 'ASC'): self
     {
         $this->orderBy[] = compact('column', 'direction');
+        return $this;
+    }
+
+    /**
+     * Order by a raw SQL fragment. Caller owns the SQL — typically used for
+     * CASE WHEN, FIELD(), or aggregate-based orderings that strict identifier
+     * validation correctly rejects.
+     */
+    public function orderByRaw(string $expression, string $direction = 'ASC'): self
+    {
+        // Pre-wrap with parens so the grammar's wrap() sees it as an expression
+        // and returns it untouched.
+        $this->orderBy[] = [
+            'column' => '(' . $expression . ')',
+            'direction' => strtoupper($direction) === 'DESC' ? 'DESC' : 'ASC',
+        ];
         return $this;
     }
 

@@ -114,12 +114,28 @@ class Validator
     }
 
     /**
-     * Basic sanitization for validated data
+     * Default normalizer for validated values: trim strings only.
+     *
+     * The previous version of this method called htmlspecialchars + strip_tags
+     * here, on the theory that "validated input should be safe to render."
+     * That was wrong for two reasons:
+     *
+     *   1. Escaping is the responsibility of the *output* layer (the view
+     *      engine's `e()` helper). Escaping at input time corrupts legitimate
+     *      values like `<3`, `a > b`, code snippets, regex strings, etc.
+     *   2. HTML-escaped data should not live in the database. When you later
+     *      need to render it as plain text, or echo it into JSON, or compare
+     *      it programmatically, you have to remember to un-escape it — and
+     *      everyone forgets at some point.
+     *
+     * If a specific field genuinely needs aggressive cleaning (e.g. a markdown
+     * field with strict allowed tags), do it explicitly in the controller
+     * before save, using a tool that fits the use case.
      */
     protected function sanitize($value)
     {
         if (is_string($value)) {
-            return htmlspecialchars(strip_tags(trim($value)), ENT_QUOTES, 'UTF-8');
+            return trim($value);
         }
         if (is_array($value)) {
             return array_map([$this, 'sanitize'], $value);
@@ -169,8 +185,15 @@ class Validator
 
     protected function validateBoolean(string $field, $value): bool
     {
-        $acceptable = [true, false, 1, 0, '1', '0', 'true', 'false'];
-        if ($value !== null && !in_array($value, $acceptable, true)) {
+        // Accept typical form/JSON representations. Case-insensitive on
+        // the string variants so "True"/"YES" also work.
+        $acceptable = [true, false, 1, 0, '1', '0', 'true', 'false',
+                       'yes', 'no', 'on', 'off'];
+        if ($value === null) {
+            return true;
+        }
+        $needle = is_string($value) ? strtolower($value) : $value;
+        if (!in_array($needle, $acceptable, true)) {
             $this->addError($field, "The {$field} field must be true or false.");
             return false;
         }

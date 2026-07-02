@@ -18,6 +18,13 @@ class Router
     protected static $errorHandler = null;
     protected static $routesSorted = false;
     protected static $reflectionCache = [];
+
+    /**
+     * Cap the reflection cache so long-running workers don't accumulate
+     * entries forever. When we're about to exceed the cap, drop the oldest
+     * half (LRU-ish via array_slice — cheap and good enough at these sizes).
+     */
+    protected const REFLECTION_CACHE_LIMIT = 512;
     protected static $parsedAppDomains = null;
 
     /**
@@ -432,30 +439,41 @@ class Router
         $requestUri = ($requestUri !== '/') ? rtrim($requestUri, '/') : '/';
         
         $requestHost = self::$request->host();
-        
-        // Sort routes: literal paths match before parameterized ones
+        // Strip :port from host before matching — both subdomain/exact-host
+        // comparisons should ignore the port the client used.
+        if (($colonPos = strpos($requestHost, ':')) !== false) {
+            $requestHost = substr($requestHost, 0, $colonPos);
+        }
+
+        // Sort by specificity: literal first, then parameterized, then wildcards.
         if (!self::$routesSorted) {
             usort(self::$routes, function (Route $a, Route $b) {
-                $aParams = substr_count($a->path, '{');
-                $bParams = substr_count($b->path, '{');
-                return $aParams <=> $bParams;
+                return self::routeSpecificity($a) <=> self::routeSpecificity($b);
             });
             self::$routesSorted = true;
         }
-        
+
         foreach (self::$routes as $route) {
             if ($route->method !== 'ANY' && $route->method !== $requestMethod) {
                 continue;
             }
-            
-            // matchSubdomain now injects params directly into self::$request
-            if (!self::matchSubdomain($route, $requestHost)) {
+
+            // matchSubdomain now returns the captured params (or null) rather
+            // than mutating Request mid-iteration. This avoids stale
+            // subdomain params lingering on the request after a route's
+            // subdomain matched but its URI did not.
+            $subdomainParams = self::matchSubdomain($route, $requestHost);
+            if ($subdomainParams === null) {
                 continue;
             }
-            
+
             $params = self::matchRoute($route->compiledPattern, $requestUri);
-            
+
             if ($params !== false) {
+                // Merge subdomain captures first, then URI captures (URI wins
+                // on key collision, which is the standard precedence).
+                $params = array_merge($subdomainParams, $params);
+
                 // 1. Hydrate the Request object with route parameters
                 foreach ($params as $key => $value) {
                     self::$request->setParam($key, $value);
@@ -591,92 +609,140 @@ class Router
         return self::$parsedAppDomains;
     }
 
-    protected static function matchSubdomain(Route $route, string $host): bool
+    /**
+     * Try to match a route's subdomain constraint against the request host.
+     *
+     * Returns:
+     *   - null when the route does NOT match (so dispatch can move on).
+     *   - array of captured subdomain params (possibly empty) on a match.
+     *
+     * Important: this method is intentionally pure — it does NOT mutate
+     * Request. The previous implementation set route params as a side effect
+     * of the constraint check, which meant a route that matched the subdomain
+     * but failed the URI match would leave stale params on the Request that
+     * a later route's handler could observe.
+     */
+    protected static function matchSubdomain(Route $route, string $host): ?array
     {
         $appDomains = self::getAppDomains();
 
-        // If the route doesn't have a subdomain explicitly defined (Global Route)
+        // Global routes (no subdomain constraint).
         if (empty($route->subdomain)) {
-            // If APP_DOMAIN is set, strictly enforce that this global route 
-            // ONLY responds to the root domains or www. (Prevents Subdomain Bleeding)
+            // If APP_DOMAIN is set, lock global routes to the apex/www host
+            // so a global route doesn't accidentally serve traffic for an
+            // unrelated subdomain ("subdomain bleeding").
             if (!empty($appDomains)) {
                 foreach ($appDomains as $appDomain) {
                     if ($host === $appDomain || $host === 'www.' . $appDomain) {
-                        return true;
+                        return [];
                     }
                 }
-                return false;
+                return null;
             }
-            return true;
+            return [];
         }
 
         $expectedSubdomain = $route->subdomain;
 
-        // Helper to check a specific host against a specific root domain
-        $checkDomainMatch = function($domain) use ($expectedSubdomain, $host) {
-            $expectedFull = $expectedSubdomain;
-            if ($domain !== '' && strpos($expectedFull, $domain) === false) {
-                $expectedFull = rtrim($expectedFull, '.') . '.' . ltrim($domain, '.');
-            }
-
+        // Try a fully-qualified expected host against the request host.
+        $tryMatch = static function (string $expectedFull) use ($host): ?array {
             if (strpos($expectedFull, '{') !== false) {
                 $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '(?P<$1>[^.]+)', $expectedFull);
-                $pattern = '#^' . $pattern . '$#'; // Match the full host strictly
-
+                $pattern = '#^' . $pattern . '$#';
                 if (preg_match($pattern, $host, $matches)) {
-                    $subdomainParams = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
-                    foreach ($subdomainParams as $key => $value) {
-                        self::$request->setParam($key, $value);
-                    }
-                    return true;
+                    return array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
                 }
-                return false;
+                return null;
             }
-
-            return $host === $expectedFull;
+            return $host === $expectedFull ? [] : null;
         };
 
         if (!empty($appDomains)) {
             foreach ($appDomains as $domain) {
-                if ($checkDomainMatch($domain)) {
-                    return true;
+                $expectedFull = $expectedSubdomain;
+                if ($domain !== '' && strpos($expectedFull, $domain) === false) {
+                    $expectedFull = rtrim($expectedFull, '.') . '.' . ltrim($domain, '.');
+                }
+                $captured = $tryMatch($expectedFull);
+                if ($captured !== null) {
+                    return $captured;
                 }
             }
-            return false;
+            return null;
         }
 
-        // Fallback if no APP_DOMAIN is set: 
+        // No APP_DOMAIN configured — fall back to bare-subdomain matching.
         if (strpos($expectedSubdomain, '{') !== false) {
             $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '(?P<$1>[^.]+)', $expectedSubdomain);
-            $pattern = '#^' . $pattern . '\.#'; // Match the subdomain prefix
+            $pattern = '#^' . $pattern . '\.#';
             if (preg_match($pattern, $host, $matches)) {
-                $subdomainParams = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
-                foreach ($subdomainParams as $key => $value) {
-                    self::$request->setParam($key, $value);
-                }
-                return true;
+                return array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
             }
-            return false;
+            return null;
         }
 
-        return $host === $expectedSubdomain || strpos($host, rtrim($expectedSubdomain, '.') . '.') === 0;
+        if ($host === $expectedSubdomain
+            || strpos($host, rtrim($expectedSubdomain, '.') . '.') === 0) {
+            return [];
+        }
+        return null;
     }
     
     
-    /**
-     * Match a route pattern against a URI
-     * * @param string $pattern
-     * @param string $uri
-     * @return array|false
-     */
+    // Compile a route path into a PCRE pattern.
+    //
+    // Wildcard semantics:
+    //   /prefix/*  → matches /prefix, /prefix/, /prefix/anything, /prefix/a/b/c.
+    //                The trailing /* makes the slash itself optional so the
+    //                bare prefix matches too.
+    //   /prefix*   → matches /prefix, /prefixXYZ, /prefix-foo, /prefix/anything.
+    //                * is a "match zero or more of anything" wildcard, including /.
+    //   *  alone   → matches everything.
+    //   /a/* /b    → matches /a/x/b and /a/x/y/b (greedy .*) — the space here
+    //                is only to keep this comment block valid.
+    //
+    // Parameter semantics:
+    //   {name}     → captures one URL segment (no /).
+    //   {name:re}  → captures whatever the inline regex matches.
     protected static function compilePattern(string $pattern): string
     {
+        // Trailing /* is a common "match prefix and anything under it" shorthand.
+        // Rewrite it so the prefix alone also matches (after trailing-slash strip).
+        if (substr($pattern, -2) === '/*') {
+            $pattern = substr($pattern, 0, -2) . '(?:/.*)?';
+        }
+
+        // Any remaining * is a "match anything" wildcard.
         if (strpos($pattern, '*') !== false) {
             $pattern = str_replace('*', '.*', $pattern);
         }
+
         $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*):(.+?)\}/', '(?P<$1>$2)', $pattern);
         $pattern = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '(?P<$1>[^/]+)', $pattern);
         return '#^' . $pattern . '$#';
+    }
+
+    /**
+     * Specificity score for the dispatch-time sort.
+     * Lower wins. Tie-breakers:
+     *   - Literal routes beat parameterized routes.
+     *   - Parameterized routes beat any wildcard route.
+     *   - Among wildcard routes, a longer literal prefix wins
+     *     (so `/config/users/*` is tried before `/config/*`).
+     */
+    protected static function routeSpecificity(Route $route): int
+    {
+        $hasWildcard = strpos($route->path, '*') !== false;
+        $paramCount = substr_count($route->path, '{');
+
+        if ($hasWildcard) {
+            // Push wildcards to the back of the line.
+            // Longer literal-prefix-before-* sorts lower (= tried first).
+            $firstStarPos = strpos($route->path, '*');
+            return 10000 + ($paramCount * 100) - $firstStarPos;
+        }
+
+        return $paramCount;
     }
 
     protected static function matchRoute(string $pattern, string $uri)
@@ -701,9 +767,17 @@ class Router
             : (is_object($callable) && !$callable instanceof \Closure ? get_class($callable) . '::__invoke' : spl_object_id($callable));
 
         if (!isset(self::$reflectionCache[$cacheKey])) {
-            self::$reflectionCache[$cacheKey] = is_array($callable) 
-                ? new \ReflectionMethod($callable[0], $callable[1]) 
-                : (is_object($callable) && !$callable instanceof \Closure ? new \ReflectionMethod($callable, '__invoke') : new \ReflectionFunction($callable));
+            if (count(self::$reflectionCache) >= self::REFLECTION_CACHE_LIMIT) {
+                // Bounded cache: drop the oldest half. Cheap at these sizes.
+                self::$reflectionCache = array_slice(
+                    self::$reflectionCache, self::REFLECTION_CACHE_LIMIT / 2, null, true
+                );
+            }
+            self::$reflectionCache[$cacheKey] = is_array($callable)
+                ? new \ReflectionMethod($callable[0], $callable[1])
+                : (is_object($callable) && !$callable instanceof \Closure
+                    ? new \ReflectionMethod($callable, '__invoke')
+                    : new \ReflectionFunction($callable));
         }
         $reflection = self::$reflectionCache[$cacheKey];
 
@@ -717,6 +791,12 @@ class Router
                     $dependencies[] = self::$request;
                 } elseif ($className === \Framework\Core\Http\Response::class) {
                     $dependencies[] = self::$response;
+                } elseif (class_exists(\Framework\Core\Http\FormRequest::class)
+                          && is_subclass_of($className, \Framework\Core\Http\FormRequest::class)) {
+                    // FormRequest subclasses take a Request in their
+                    // constructor; feed them the CURRENT request rather
+                    // than letting the container build a fresh one.
+                    $dependencies[] = new $className(self::$request);
                 } elseif (self::$container && self::$container->has($className)) {
                     $dependencies[] = self::$container->make($className);
                 } else {
@@ -801,14 +881,18 @@ class Router
     }
     
     /**
-     * Clear all routes (useful for testing)
-     * * @return void
+     * Reset router state. Used by tests and worker reset hooks.
+     * Clears registered routes, the group stack, the sort flag, the
+     * reflection cache, and the parsed-APP_DOMAIN cache so env changes
+     * between tests are respected.
      */
     public static function clearRoutes(): void
     {
         self::$routes = [];
         self::$groupStack = [];
         self::$routesSorted = false;
+        self::$reflectionCache = [];
+        self::$parsedAppDomains = null;
     }
     
     /**
@@ -871,8 +955,98 @@ class Router
         if (!file_exists($filePath)) {
             throw new \Exception("Route file not found: {$filePath}");
         }
-        
+
         require_once $filePath;
+    }
+
+    // ─── Route caching ──────────────────────────────────────────────────
+
+    /**
+     * Serializable view of the current route table. Only user routes are
+     * included — framework-internal routes (like `/_framework/*`) are
+     * always added fresh by init() so they can evolve between framework
+     * versions without invalidating a user's cache.
+     *
+     * Rejects Closure handlers and object middleware — the point of the
+     * cache is to be a static PHP array that var_export() can dump into a
+     * file, and closures aren't serializable that way. When a route uses
+     * a closure, the developer must convert it to
+     * `[Controller::class, 'method']` or accept that route caching is off.
+     *
+     * @return array{routes: array, generated_at: string}
+     * @throws \RuntimeException when a route uses a non-serializable handler.
+     */
+    public static function exportRoutesForCache(): array
+    {
+        $out = [];
+        foreach (self::$routes as $route) {
+            // Skip framework-internal routes.
+            if (strpos($route->path, '/_framework/') === 0) {
+                continue;
+            }
+
+            if ($route->handler instanceof \Closure) {
+                throw new \RuntimeException(
+                    "Cannot cache routes: [{$route->method} {$route->path}] uses a Closure handler. "
+                    . "Convert to [Controller::class, 'method'] handler shape to enable caching."
+                );
+            }
+
+            // Closure/object middleware breaks the export too.
+            foreach ($route->middleware as $m) {
+                if ($m instanceof \Closure || (is_object($m) && !is_string($m))) {
+                    throw new \RuntimeException(
+                        "Cannot cache routes: [{$route->method} {$route->path}] has "
+                        . "a Closure or object middleware. Register the middleware as a "
+                        . "class name / alias string instead."
+                    );
+                }
+            }
+
+            $out[] = [
+                'method'          => $route->method,
+                'path'            => $route->path,
+                'handler'         => $route->handler,
+                'subdomain'       => $route->subdomain,
+                'middleware'      => $route->middleware,
+                'name'            => $route->name,
+                'compiledPattern' => $route->compiledPattern,
+            ];
+        }
+
+        return [
+            'routes'       => $out,
+            'generated_at' => date('c'),
+        ];
+    }
+
+    /**
+     * Restore routes from a `route:cache` artifact. Appends to whatever's
+     * already in the table (typically just the framework-internal routes
+     * added by init()); does NOT clear.
+     */
+    public static function loadCachedRoutes(string $cachePath): int
+    {
+        if (!file_exists($cachePath)) {
+            return 0;
+        }
+        $data = require $cachePath;
+        if (!is_array($data) || !isset($data['routes']) || !is_array($data['routes'])) {
+            return 0;
+        }
+
+        $loaded = 0;
+        foreach ($data['routes'] as $r) {
+            $route = new Route((string) $r['method'], (string) $r['path'], $r['handler']);
+            $route->subdomain       = $r['subdomain']       ?? null;
+            $route->middleware      = $r['middleware']      ?? [];
+            $route->name            = $r['name']            ?? null;
+            $route->compiledPattern = $r['compiledPattern'] ?? self::compilePattern($route->path);
+            self::$routes[] = $route;
+            $loaded++;
+        }
+        self::$routesSorted = false;
+        return $loaded;
     }
     
     /**

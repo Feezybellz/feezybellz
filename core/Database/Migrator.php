@@ -144,10 +144,33 @@ class Migrator
         return DB::table($this->migrationsTable)->on($connection)->count() + 1;
     }
 
+    /**
+     * Make sure the migrations tracking table exists.
+     *
+     * Built from a single Schema blueprint and handed to the active driver.
+     * This keeps DDL identical across MySQL/Postgres/SQLite (each driver still
+     * picks its own column types via buildColumnDefinition). NoSQL drivers
+     * override createStorage() to a no-op, which is exactly what we want.
+     */
     protected function ensureMigrationsTable(): void
     {
-        // Delegated to driver to handle SQL vs NoSQL tracking setup
-        DB::connection($this->connection)->ensureMigrationTracking($this->migrationsTable);
+        $driver = DB::connection($this->connection);
+
+        // Idempotent: drivers all use CREATE TABLE IF NOT EXISTS internally.
+        $schema = new Schema($this->migrationsTable, $driver);
+        $schema->id();
+        $schema->string('migration', 255);
+        $schema->integer('batch');
+        $schema->timestamp('created_at')->default('CURRENT_TIMESTAMP');
+        $schema->index(['migration'], "idx_{$this->migrationsTable}_migration");
+
+        try {
+            $schema->create();
+        } catch (\Throwable $e) {
+            // Fall back to the driver-specific bootstrap if the blueprint path
+            // doesn't fit (e.g. unusual NoSQL drivers).
+            $driver->ensureMigrationTracking($this->migrationsTable);
+        }
     }
 
     protected function getMigrationFiles(): array

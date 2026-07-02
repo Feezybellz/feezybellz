@@ -4,6 +4,18 @@ namespace Framework\Core;
 use Framework\Core\Exceptions\Handler;
 use Framework\Core\Container\Container;
 
+/**
+ * The application root.
+ *
+ * NOTE — architecture: composition vs inheritance.
+ *
+ * This class extends Container, giving `$app->make(...)`, `$app->bind(...)`
+ * etc. directly on the Application object. The alternative — composition
+ * via a Container property (`$app->container->make(...)`) — would be
+ * architecturally cleaner but requires touching every framework method
+ * that calls `$app->make()`. Keeping inheritance for now; the trade-off is
+ * documented so readers know the pattern is intentional, not accidental.
+ */
 class Application extends Container
 {
     protected static $basePath;

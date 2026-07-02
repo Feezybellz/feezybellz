@@ -7,10 +7,43 @@ use Framework\Core\Cache\Drivers\FileDriver;
 class Cache
 {
 
-    /*
-    Upgraed to be able to use tcp connection 
-    */
+    /**
+     * @var CacheDriverInterface|null The active driver instance.
+     */
     private static $driver = null;
+
+    /**
+     * Swap the active driver. Primary use cases:
+     *   - Tests: inject an in-memory fake to keep suites hermetic.
+     *   - Long-running workers: hot-swap between per-tenant caches without
+     *     tearing down the whole process.
+     *
+     * Example:
+     *   Cache::setDriver(new \Framework\Core\Cache\Drivers\FileDriver(['path' => sys_get_temp_dir()]));
+     */
+    public static function setDriver(CacheDriverInterface $driver): void
+    {
+        self::$driver = $driver;
+    }
+
+    /**
+     * Clear the cached driver. The next Cache call rebuilds from config.
+     * Use this between test cases, or when config('cache') has changed at runtime.
+     */
+    public static function reset(): void
+    {
+        self::$driver = null;
+    }
+
+    /**
+     * Return the active driver, building it lazily from config if needed.
+     * Rarely called directly — exposed for tests and advanced usage.
+     */
+    public static function driver(): CacheDriverInterface
+    {
+        self::init();
+        return self::$driver;
+    }
 
     private static function init(): void
     {
@@ -18,11 +51,9 @@ class Cache
             return;
         }
 
-        // Load configuration
         $config = function_exists('config') ? config('cache') : self::getDefaultConfig();
         $defaultDriver = $config['default'] ?? 'file';
 
-        // Instantiate the correct driver
         switch ($defaultDriver) {
             case 'file':
                 self::$driver = new FileDriver($config['stores']['file'] ?? []);

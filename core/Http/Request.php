@@ -29,11 +29,19 @@ class Request
         $parsedJson = json_decode($jsonData, true);
         $this->json = is_array($parsedJson) ? $parsedJson : [];
 
-        // Support method spoofing (e.g. POST with _method=PUT)
+        // Method spoofing: only honor `_method` when it came in via a form
+        // POST (application/x-www-form-urlencoded or multipart/form-data).
+        // Allowing it from JSON bodies meant a CSRF-exempt JSON API could be
+        // coerced into DELETE/PUT semantics, escaping any per-verb protections.
         if ($this->method === 'POST') {
-            $spoofedMethod = strtoupper($this->input('_method'));
-            if (in_array($spoofedMethod, ['PUT', 'PATCH', 'DELETE'])) {
-                $this->method = $spoofedMethod;
+            $contentType = strtolower((string) ($this->server['CONTENT_TYPE'] ?? ''));
+            $isFormPost  = str_contains($contentType, 'application/x-www-form-urlencoded')
+                        || str_contains($contentType, 'multipart/form-data');
+            if ($isFormPost && isset($this->post['_method'])) {
+                $spoofedMethod = strtoupper((string) $this->post['_method']);
+                if (in_array($spoofedMethod, ['PUT', 'PATCH', 'DELETE'], true)) {
+                    $this->method = $spoofedMethod;
+                }
             }
         }
     }
@@ -113,30 +121,42 @@ class Request
     }
 
     /**
-     * Get the current subdomain (e.g., returns 'api' from 'api.myapp.com')
-     * Returns null if accessing the root domain.
-     * 
-     * @return string|null
+     * Get the current subdomain (e.g., returns 'api' from 'api.myapp.com').
+     * Returns null if the request is hitting the apex domain or www host.
+     *
+     * Resolution:
+     *   1. The Host header is stripped of any :port suffix before matching.
+     *   2. If APP_DOMAIN is configured, the host must exactly *end* in `.<base>`
+     *      to count as a subdomain. This rejects look-alikes like
+     *      `evil-example.com` against `example.com`, even though that string
+     *      naively "contains" example.com.
+     *   3. Without APP_DOMAIN, fall back to "first dot-segment if the host has
+     *      3+ parts and isn't a `www.*` host".
      */
     public function subdomain(): ?string
     {
         $host = $this->host();
+        if (($colonPos = strpos($host, ':')) !== false) {
+            $host = substr($host, 0, $colonPos);
+        }
+
         $appDomains = array_filter(array_map('trim', explode(',', env('APP_DOMAIN', ''))));
 
-        // If APP_DOMAIN is set, dynamically strip it out
         if (!empty($appDomains)) {
             foreach ($appDomains as $base) {
                 $base = ltrim($base, '.');
-                if (strpos($host, $base) !== false && $host !== $base && $host !== 'www.' . $base) {
-                    if (str_ends_with($host, '.' . $base)) {
-                        return rtrim(str_replace('.' . $base, '', $host), '.');
-                    }
+                if ($base === '' || $host === $base || $host === 'www.' . $base) {
+                    continue;
+                }
+                $suffix = '.' . $base;
+                if (str_ends_with($host, $suffix)) {
+                    // Length-based strip avoids str_replace's all-occurrences risk.
+                    return substr($host, 0, -strlen($suffix));
                 }
             }
             return null;
         }
 
-        // Fallback: If no APP_DOMAIN, split by dot and return the first part if it has 3+ parts
         $parts = explode('.', $host);
         if (count($parts) >= 3 && $parts[0] !== 'www') {
             return $parts[0];

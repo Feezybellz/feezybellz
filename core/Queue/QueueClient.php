@@ -1,86 +1,74 @@
 <?php
 
 /**
- * =============================================================================
  * QueueClient — Lightweight Job Producer (TCP Socket Client)
- * =============================================================================
  *
- * This class is used by your web application (controllers, services, etc.)
- * to push jobs to the QueueServer. It opens a short-lived TCP connection,
- * sends the job payload, reads the acknowledgement, and closes the connection.
+ * Speaks the QueueServer v2 wire protocol:
  *
- * Usage from a controller:
+ *   ┌──────────────────────┬──────────────────────┬──────────────────┐
+ *   │ 4 bytes (uint32 BE)  │ 32 bytes             │ N bytes          │
+ *   │ = 32 + N             │ HMAC-SHA256(sec,json)│ JSON payload     │
+ *   └──────────────────────┴──────────────────────┴──────────────────┘
  *
- * // Dispatch a named function
- * QueueClient::dispatch('sendWelcomeEmail', ['user@example.com']);
+ * The signature is REQUIRED unless the server explicitly runs with
+ * `require_signature=false` (dev only). The signing key is read from
+ * config('queue_server.secret') → env('QUEUE_SERVER_SECRET') → env('APP_KEY').
  *
- * // Dispatch a static class method
- * QueueClient::dispatch(['App\\Services\\Email', 'send'], ['user@example.com', 'Hello!']);
- *
- * // With custom host/port
- * $client = new QueueClient('127.0.0.1', 9090);
- * $result = $client->push('processImage', ['/uploads/photo.jpg']);
- *
- * Wire Protocol (must match QueueServer):
- * ┌──────────────────────┬──────────────────────────────────────────┐
- * │ 4 bytes (uint32 BE)  │  JSON payload (UTF-8)                   │
- * │ = payload length     │  {"callable":...,"args":[...]}          │
- * └──────────────────────┴──────────────────────────────────────────┘
- *
- * @package Framework\Core\Queue
+ * Server responses use the same framing. When require_signature is on and a
+ * key is available, the client also verifies the server's signature before
+ * returning the parsed response — that way a MITM on the loopback bus can't
+ * forge a success response for a dropped job.
  */
 
 namespace Framework\Core\Queue;
+
 class QueueClient
 {
-    // ─── Properties ─────────────────────────────────────────────────────
-
-    /** @var string The IP/hostname of the queue server to connect to. */
+    /** @var string */
     private $host;
-
-    /** @var int The TCP port of the queue server. */
+    /** @var int */
     private $port;
-
-    /**
-     * Connection timeout in seconds.
-     *
-     * How long stream_socket_client() will wait to establish the TCP
-     * connection, AND how long fread()/fwrite() will wait for a response
-     * before giving up.
-     *
-     * @var int
-     */
+    /** @var int */
     private $timeout;
+    /** @var string */
+    private $secret;
 
-    // ─── Constructor ────────────────────────────────────────────────────
-
-    /**
-     * Create a new QueueClient instance.
-     *
-     * @param string $host     Queue server hostname/IP (default: 127.0.0.1)
-     * @param int    $port     Queue server TCP port (default: 9090)
-     * @param int    $timeout  Connection timeout in seconds (default: 5)
-     */
-    public function __construct($host = null, $port = null, $timeout = 5)
+    public function __construct($host = null, $port = null, $timeout = 5, ?string $secret = null)
     {
-        $this->host = $host ?? (function_exists('config') ? config('queue.host') : '127.0.0.1')  ;
-        $this->port = $port ?? (function_exists('config') ? config('queue.port') : 9090);
-        $this->timeout = $timeout ?? (function_exists('config') ? config('queue.timeout') : 5);
+        $this->host = $host ?? (function_exists('config') ? config('queue_server.bind_host', config('queue.host', '127.0.0.1')) : '127.0.0.1');
+        $this->port = $port ?? (function_exists('config') ? config('queue_server.bind_port', config('queue.port', 9090)) : 9090);
+        $this->timeout = $timeout ?? 5;
+        $this->secret = $secret ?? self::resolveSecret();
     }
 
-    // ─── Public API ─────────────────────────────────────────────────────
+    /**
+     * Resolve the HMAC secret. Preference order:
+     *   1. Explicit constructor arg.
+     *   2. config('queue_server.secret').
+     *   3. env('QUEUE_SERVER_SECRET').
+     *   4. env('APP_KEY').
+     * Base64-prefixed keys are unwrapped so hash_hmac gets raw bytes.
+     */
+    private static function resolveSecret(): string
+    {
+        $secret = '';
+        if (function_exists('config')) {
+            $secret = (string) (config('queue_server.secret') ?? '');
+        }
+        if ($secret === '') {
+            $secret = (string) (getenv('QUEUE_SERVER_SECRET') ?: getenv('APP_KEY') ?: '');
+        }
+        if (strpos($secret, 'base64:') === 0) {
+            $secret = base64_decode(substr($secret, 7));
+        }
+        return $secret;
+    }
 
     /**
      * Push a job onto the remote queue.
-     *
-     * @param string|array $callable  The PHP callable to execute on the server.
-     * @param array        $args      Arguments to pass to the callable (default: [])
-     *
-     * @return array{success: bool, message: string, data?: array}
      */
     public function push($callable, array $args = []): array
     {
-        // ── Step 1: Build & Encode the job payload ──────────────────────
         if ($callable instanceof \Closure || is_object($callable)) {
             return [
                 'success' => false,
@@ -88,78 +76,15 @@ class QueueClient
             ];
         }
 
-        $payload = [
+        return $this->sendFrame([
             'type'     => 'callable',
             'callable' => $callable,
             'args'     => $args,
-        ];
-
-        $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
-
-        if ($json === false) {
-            return [
-                'success' => false,
-                'message' => 'Failed to encode job payload as JSON: ' . json_last_error_msg(),
-            ];
-        }
-
-        // ── Step 2: Open a TCP connection ───────────────────────────────
-        $address = "tcp://{$this->host}:{$this->port}";
-        $socket = @stream_socket_client($address, $errno, $errstr, $this->timeout);
-
-        if ($socket === false) {
-            return [
-                'success' => false,
-                'message' => "Could not connect to queue server at {$address}: {$errstr} (errno: {$errno})",
-            ];
-        }
-
-        // ── Step 3: CRITICAL TIMEOUT FIX ────────────────────────────────
-        // By default, PHP uses the default_socket_timeout (usually 60s)
-        // for stream reads/writes once connected. If the queue server
-        // accepts the connection but hangs, the web request will freeze.
-        // We strictly enforce our custom timeout for I/O operations.
-        stream_set_timeout($socket, $this->timeout);
-
-        // ── Step 4: Build & Send the length-prefixed message ────────────
-        $header = pack('N', strlen($json));
-        $message = $header . $json;
-
-        $totalWritten = 0;
-        $messageLength = strlen($message);
-
-        while ($totalWritten < $messageLength) {
-            $written = @fwrite($socket, substr($message, $totalWritten));
-
-            if ($written === false || $written === 0) {
-                fclose($socket);
-                return [
-                    'success' => false,
-                    'message' => 'Failed to send job payload to queue server (connection broken during write)',
-                ];
-            }
-
-            $totalWritten += $written;
-        }
-
-        // ── Step 5: Read Response & Clean Up ────────────────────────────
-        $response = $this->readResponse($socket);
-        
-        fclose($socket);
-
-        return $response;
+        ]);
     }
 
     /**
      * Static convenience method for one-liner job dispatching.
-     *
-     * $result = QueueClient::dispatch('processOrder', [$orderId]);
-     *
-     * @param string|array $callable  The PHP callable to execute
-     * @param array        $args      Arguments for the callable
-     * @param array        $options   Optional overrides: ['host', 'port', 'timeout']
-     *
-     * @return array{success: bool, message: string, data?: array}
      */
     public static function dispatch($callable, array $args = [], array $options = []): array
     {
@@ -167,35 +92,104 @@ class QueueClient
         $defaultPort = 9090;
 
         if (function_exists('config')) {
-            $queueConfig = config('queue');
-            if (is_array($queueConfig)) {
-                $defaultHost = $queueConfig['host'] ?? $defaultHost;
-                $defaultPort = $queueConfig['port'] ?? $defaultPort;
-            }
+            $defaultHost = config('queue_server.bind_host', config('queue.host', $defaultHost));
+            $defaultPort = (int) config('queue_server.bind_port', config('queue.port', $defaultPort));
         }
 
         $host    = $options['host']    ?? $defaultHost;
         $port    = $options['port']    ?? $defaultPort;
         $timeout = $options['timeout'] ?? 5;
+        $secret  = $options['secret']  ?? null;
 
-        $client = new self($host, (int) $port, (int) $timeout);
-
+        $client = new self($host, (int) $port, (int) $timeout, $secret);
         return $client->push($callable, $args);
     }
 
-    // ─── Private Helpers ────────────────────────────────────────────────
+    public function isRunning(): bool
+    {
+        return $this->getStats()['success'] === true;
+    }
+
+    public static function isOnline(array $options = []): bool
+    {
+        $defaultHost = '127.0.0.1';
+        $defaultPort = 9090;
+
+        if (function_exists('config')) {
+            $defaultHost = config('queue_server.bind_host', config('queue.host', $defaultHost));
+            $defaultPort = (int) config('queue_server.bind_port', config('queue.port', $defaultPort));
+        }
+
+        $host    = $options['host']    ?? $defaultHost;
+        $port    = $options['port']    ?? $defaultPort;
+        $timeout = $options['timeout'] ?? 2;
+        $secret  = $options['secret']  ?? null;
+
+        $client = new self($host, (int) $port, (int) $timeout, $secret);
+        return $client->isRunning();
+    }
+
+    public function getStats(): array
+    {
+        return $this->sendFrame(['command' => 'stats']);
+    }
+
+    // ─── Wire ─────────────────────────────────────────────────────────
+
+    private function sendFrame(array $payload): array
+    {
+        $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
+        if ($json === false) {
+            return [
+                'success' => false,
+                'message' => 'Failed to encode job payload as JSON: ' . json_last_error_msg(),
+            ];
+        }
+
+        $address = "tcp://{$this->host}:{$this->port}";
+        $socket = @stream_socket_client($address, $errno, $errstr, $this->timeout);
+        if ($socket === false) {
+            return [
+                'success' => false,
+                'message' => "Could not connect to queue server at {$address}: {$errstr} (errno: {$errno})",
+            ];
+        }
+        stream_set_timeout($socket, $this->timeout);
+
+        // Sign — 32 zero bytes when no secret available. The server will
+        // reject the frame if it has require_signature=true, which is the
+        // correct behavior — misconfiguration should fail loudly.
+        $sig = $this->secret !== ''
+            ? hash_hmac('sha256', $json, $this->secret, true)
+            : str_repeat("\0", 32);
+
+        $frame = pack('N', 32 + strlen($json)) . $sig . $json;
+
+        $totalWritten = 0;
+        $len = strlen($frame);
+        while ($totalWritten < $len) {
+            $written = @fwrite($socket, substr($frame, $totalWritten));
+            if ($written === false || $written === 0) {
+                fclose($socket);
+                return [
+                    'success' => false,
+                    'message' => 'Failed to send job payload to queue server (connection broken during write)',
+                ];
+            }
+            $totalWritten += $written;
+        }
+
+        $response = $this->readResponse($socket);
+        fclose($socket);
+        return $response;
+    }
 
     /**
-     * Read a length-prefixed JSON response from the server.
-     *
-     * @param resource $socket  The connected socket to read from
-     * @return array{success: bool, message: string, data?: array}
+     * Read a signed length-prefixed response frame from the server.
      */
     private function readResponse($socket): array
     {
-        // ── Step 1: Read and Decode the 4-byte length header ────────────
         $header = $this->readExact($socket, 4);
-
         if ($header === false) {
             return [
                 'success' => false,
@@ -204,18 +198,30 @@ class QueueClient
         }
 
         $decoded = unpack('N', $header);
-        $payloadLength = $decoded[1];
+        $totalLen = $decoded[1];
 
-        if ($payloadLength > 1024 * 1024) {
+        if ($totalLen > (1024 * 1024) + 32) {
             return [
                 'success' => false,
-                'message' => "Server response payload too large ({$payloadLength} bytes)",
+                'message' => "Server response payload too large ({$totalLen} bytes)",
+            ];
+        }
+        if ($totalLen < 32) {
+            return [
+                'success' => false,
+                'message' => "Malformed server response (frame < 32 bytes for signature)",
             ];
         }
 
-        // ── Step 2: Read and Decode the JSON payload ────────────────────
-        $json = $this->readExact($socket, $payloadLength);
+        $sig = $this->readExact($socket, 32);
+        if ($sig === false) {
+            return [
+                'success' => false,
+                'message' => 'Failed to read response signature',
+            ];
+        }
 
+        $json = $this->readExact($socket, $totalLen - 32);
         if ($json === false) {
             return [
                 'success' => false,
@@ -223,122 +229,45 @@ class QueueClient
             ];
         }
 
-        $response = json_decode($json, true);
+        // Verify server signature when we have a secret. If the server sent
+        // 32 zero bytes (require_signature=false on server) we accept only
+        // when we too have no secret configured — otherwise we treat the
+        // absence of a signature as a downgrade attempt.
+        if ($this->secret !== '') {
+            $expected = hash_hmac('sha256', $json, $this->secret, true);
+            if (!hash_equals($expected, $sig)) {
+                return [
+                    'success' => false,
+                    'message' => 'Server response signature invalid — possible tampering or misconfigured secret.',
+                ];
+            }
+        }
 
+        $response = json_decode($json, true);
         if ($response === null && json_last_error() !== JSON_ERROR_NONE) {
             return [
                 'success' => false,
                 'message' => 'Server response was not valid JSON: ' . json_last_error_msg(),
             ];
         }
-
         return $response;
     }
 
-    /**
-     * Read exactly $length bytes from a socket.
-     *
-     * @param resource $socket  The socket to read from
-     * @param int      $length  Exact number of bytes to read
-     *
-     * @return string|false  The data read, or false on failure/timeout
-     */
     private function readExact($socket, int $length)
     {
         $buffer = '';
         $remaining = $length;
-
         while ($remaining > 0) {
             $chunk = @fread($socket, $remaining);
-
-            // fread() returns false on error, or an empty string on EOF.
             if ($chunk === false || ($chunk === '' && feof($socket))) {
                 return false;
             }
-
-            // Because this stream is blocking, if fread returns an empty 
-            // string WITHOUT hitting EOF, it means the stream_set_timeout 
-            // limit was reached before the bytes arrived.
             if ($chunk === '') {
-                return false;
+                return false; // stream_set_timeout reached
             }
-
             $buffer .= $chunk;
             $remaining -= strlen($chunk);
         }
-
         return $buffer;
-    }
-
-    /**
-     * Check if the queue server is currently running.
-     *
-     * @return bool
-     */
-    public function isRunning(): bool
-    {
-        $stats = $this->getStats();
-        return $stats['success'] === true;
-    }
-
-    /**
-     * Static convenience method to check if the queue is online.
-     *
-     * @param array $options Optional overrides: ['host', 'port', 'timeout']
-     * @return bool
-     */
-    public static function isOnline(array $options = []): bool
-    {
-        $defaultHost = '127.0.0.1';
-        $defaultPort = 9090;
-
-        if (function_exists('config')) {
-            $queueConfig = config('queue');
-            if (is_array($queueConfig)) {
-                $defaultHost = $queueConfig['host'] ?? $defaultHost;
-                $defaultPort = $queueConfig['port'] ?? $defaultPort;
-            }
-        }
-
-        $host    = $options['host']    ?? $defaultHost;
-        $port    = $options['port']    ?? $defaultPort;
-        $timeout = $options['timeout'] ?? 2; // Shorter timeout for status check
-
-        $client = new self($host, (int) $port, (int) $timeout);
-        return $client->isRunning();
-    }
-
-    /**
-     * Retrieve the current statistics and state from the QueueServer.
-     *
-     * @return array{success: bool, message: string, data?: array}
-     */
-    public function getStats(): array
-    {
-        // Send a payload with 'command' instead of 'callable'
-        $payload = ['command' => 'stats'];
-        $json = json_encode($payload);
-
-        $address = "tcp://{$this->host}:{$this->port}";
-        $socket = @stream_socket_client($address, $errno, $errstr, $this->timeout);
-
-        if ($socket === false) {
-            return [
-                'success' => false,
-                'message' => 'Queue Server is offline.',
-            ];
-        }
-
-        stream_set_timeout($socket, $this->timeout);
-
-        $header = pack('N', strlen($json));
-        $message = $header . $json;
-
-        @fwrite($socket, $message);
-
-        $response = $this->readResponse($socket);
-        fclose($socket);
-
-        return $response;
     }
 }

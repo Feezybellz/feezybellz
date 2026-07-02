@@ -23,20 +23,25 @@ class RateLimiter
 
     /**
      * Increment the counter for a given key for a given decay time.
+     *
+     * We put() the counter with the caller-supplied decay on the first hit
+     * so its TTL matches the timer's, then increment() from there. If we
+     * relied on increment()'s implicit-create path, the counter would use
+     * whatever default TTL the driver picked (an hour in FileDriver) which
+     * silently outlives the timer and breaks tooManyAttempts().
      */
     public static function hit(string $key, int $decaySeconds = 60): int
     {
         $timerKey = $key . ':timer';
 
-        // Single increment operation (atomic in Redis/Memcached, file-locked in FileDriver)
-        $hits = Cache::increment($key);
-
-        // Only set the timer on the first hit (when counter was just created)
-        if ($hits === 1) {
+        // If the counter doesn't exist yet, seed it with the correct TTL so
+        // its lifetime matches the caller's decay window.
+        if (!Cache::has($key)) {
+            Cache::put($key, 0, $decaySeconds);
             Cache::put($timerKey, time() + $decaySeconds, $decaySeconds);
         }
 
-        return $hits;
+        return Cache::increment($key);
     }
 
     /**

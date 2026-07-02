@@ -14,35 +14,62 @@ class PHPSessionDriver implements SessionDriverInterface
 
         if (session_status() === PHP_SESSION_NONE) {
             if (!headers_sent()) {
-                $params = session_get_cookie_params();
-                session_set_cookie_params([
-                    'lifetime' => $params['lifetime'] ?? 0,
-                    'path' => $params['path'] ?? '/',
-                    'domain' => $params['domain'] ?? '',
-                    'secure' => $this->isHttps(),
-                    'httponly' => true,
-                    'samesite' => 'Lax',
-                ]);
-                ini_set('session.use_strict_mode', '1');
+                $this->applyCookieConfig();
             }
-
-            // Use @ to suppress "headers already sent" warnings in CLI/Tests
             if (!@session_start()) {
                 return false;
             }
         }
 
         $this->started = true;
-        
-        // 1. If we have current flash data (set late in the last script), it becomes "old" for this request.
+
+        // Rotate flash: current __flash becomes __old_flash for this request.
         if (!isset($_SESSION['__flash'])) {
             $_SESSION['__flash'] = [];
         }
-        
         $_SESSION['__old_flash'] = $_SESSION['__flash'];
         $_SESSION['__flash'] = [];
 
         return true;
+    }
+
+    /**
+     * Apply developer-supplied cookie/session settings from config/session.php.
+     * Every field has a safe default so leaving the config file untouched
+     * matches the framework's previous behavior.
+     */
+    protected function applyCookieConfig(): void
+    {
+        $cfg = function_exists('config') ? config('session', []) : [];
+        $cfg = is_array($cfg) ? $cfg : [];
+
+        $secureCfg = $cfg['cookie_secure'] ?? null;
+        $secure = ($secureCfg === null) ? $this->isHttps() : (bool) $secureCfg;
+
+        $samesite = $cfg['cookie_samesite'] ?? 'Lax';
+        $samesite = in_array($samesite, ['Lax', 'Strict', 'None'], true) ? $samesite : 'Lax';
+        // SameSite=None requires Secure per browser spec.
+        if ($samesite === 'None' && !$secure) {
+            $samesite = 'Lax';
+        }
+
+        session_set_cookie_params([
+            'lifetime' => (int) ($cfg['cookie_lifetime'] ?? 0),
+            'path'     => (string) ($cfg['cookie_path'] ?? '/'),
+            'domain'   => (string) ($cfg['cookie_domain'] ?? ''),
+            'secure'   => $secure,
+            'httponly' => (bool) ($cfg['cookie_httponly'] ?? true),
+            'samesite' => $samesite,
+        ]);
+
+        if (!empty($cfg['cookie_name'])) {
+            session_name((string) $cfg['cookie_name']);
+        }
+        if (!empty($cfg['save_path']) && is_writable((string) $cfg['save_path'])) {
+            session_save_path((string) $cfg['save_path']);
+        }
+
+        ini_set('session.use_strict_mode', ($cfg['use_strict_mode'] ?? true) ? '1' : '0');
     }
 
     public function get(string $key, $default = null)
@@ -78,6 +105,29 @@ class PHPSessionDriver implements SessionDriverInterface
     public function getFlash(string $key, $default = null)
     {
         return $_SESSION['__old_flash'][$key] ?? $default;
+    }
+
+    /**
+     * Re-flash one key so it survives another request. Reads from
+     * __old_flash (the entries carried in from the previous request) and
+     * writes back into __flash (the entries that will be carried to the
+     * next request).
+     */
+    public function keep(string $key): void
+    {
+        if (isset($_SESSION['__old_flash'][$key])) {
+            $_SESSION['__flash'][$key] = $_SESSION['__old_flash'][$key];
+        }
+    }
+
+    public function reflash(): void
+    {
+        if (!empty($_SESSION['__old_flash'])) {
+            $_SESSION['__flash'] = array_merge(
+                $_SESSION['__flash'] ?? [],
+                $_SESSION['__old_flash']
+            );
+        }
     }
 
     public function regenerate(): bool

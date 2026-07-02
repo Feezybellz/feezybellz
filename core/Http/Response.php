@@ -4,10 +4,29 @@ namespace Framework\Core\Http;
 
 /**
  * Fluent Response Facade
- * Supports: 
- * - Response::json()
- * - Response::setStatusCode(201)->json()
- * - (new Response())->setStatusCode(200)->json()
+ *
+ * Supports both styles:
+ *   Response::json($data)                      // static entry point
+ *   Response::setStatusCode(201)->json($data)  // chained
+ *   (new Response())->json($data)              // explicit instance
+ *
+ * IMPORTANT — no shared singleton.
+ *
+ * Every static call creates a fresh Response instance internally. That means:
+ *
+ *   $a = Response::setStatusCode(201);      // instance A, status = 201
+ *   $b = Response::json(['ok' => true]);    // instance B, status = 200 (default)
+ *
+ * The old design used a process-wide singleton, so those two calls would have
+ * shared state — instance B's status would silently inherit A's 201. That was
+ * fine in FPM (fresh process per request) but leaked between requests in queue
+ * workers, WebSocket servers, and any long-running SAPI. It also made it
+ * possible for exception-handler code to inherit stale headers set by a
+ * controller earlier in the request. Fresh-per-call kills both problems.
+ *
+ * Chaining still works because the first static call *returns* the fresh
+ * instance and every subsequent method in the chain is an instance method
+ * operating on that same instance.
  */
 class Response
 {
@@ -15,26 +34,13 @@ class Response
     protected $headers = [];
     protected $content = '';
 
-    /** @var self|null Singleton instance for static calls */
-    protected static $instance = null;
-
     /**
-     * Get the global singleton instance
-     */
-    protected static function getInstance(): self
-    {
-        if (!static::$instance) {
-            static::$instance = new static();
-        }
-        return static::$instance;
-    }
-
-    /**
-     * Captures static calls like Response::json()
+     * Every static entry point creates a NEW instance and forwards to it.
+     * See the class docblock for the rationale.
      */
     public static function __callStatic($method, $args)
     {
-        return static::getInstance()->$method(...$args);
+        return (new static())->$method(...$args);
     }
 
     /**
@@ -106,7 +112,17 @@ class Response
         if ($statusCode) $this->_setStatusCode($statusCode);
         $this->_setHeader('Content-Type', 'application/json');
 
-        if (function_exists('recursive_format_dates')) {
+        // Date-format transform is opt-out. It walks the entire response
+        // tree, which is expensive on large payloads. Set
+        // config('app.format_json_dates') = false (or env
+        // JSON_FORMAT_DATES=false) to skip it — Models can pre-format their
+        // own date fields via casts / accessors, which is cheaper.
+        $shouldFormat = true;
+        if (function_exists('config')) {
+            $cfg = config('app.format_json_dates');
+            if ($cfg !== null) $shouldFormat = (bool) $cfg;
+        }
+        if ($shouldFormat && function_exists('recursive_format_dates')) {
             $data = recursive_format_dates($data);
         }
 
@@ -131,6 +147,11 @@ class Response
     {
         $this->_setStatusCode($statusCode);
         $this->_setHeader('Location', $url);
+        // Clear any body content — some proxies and intermediaries misbehave
+        // on 3xx responses with a body. Also drop Content-Type since there
+        // is no body left to describe.
+        $this->content = '';
+        unset($this->headers['Content-Type']);
         return $this;
     }
 

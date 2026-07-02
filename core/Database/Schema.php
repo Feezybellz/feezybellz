@@ -351,9 +351,18 @@ class Schema
     public static function hasTable(string $table): bool
     {
         $db = DB::connection();
+        $grammar = $db->getGrammar();
+
+        // Identifier validation: anything that isn't a clean identifier is treated
+        // as not-existing rather than letting it reach the driver.
         try {
-            // Standard approach across most SQL databases
-            $result = $db->query("SELECT 1 FROM `{$table}` LIMIT 1");
+            $wrapped = $grammar->wrapTable($table);
+        } catch (\InvalidArgumentException $e) {
+            return false;
+        }
+
+        try {
+            $db->query("SELECT 1 FROM {$wrapped} LIMIT 1");
             return true;
         } catch (\Exception $e) {
             return false;
@@ -365,20 +374,34 @@ class Schema
         if (!self::hasTable($table)) return false;
 
         $db = DB::connection();
+        $grammar = $db->getGrammar();
+
         try {
-            // MySQL Specific check
-            $stmt = $db->query("SHOW COLUMNS FROM `{$table}` LIKE '{$column}'");
-            // If the PDO statement returns records, the column exists
-            $result = method_exists($stmt, 'fetchAll') ? $stmt->fetchAll() : [];
-            return count($result) > 0;
-        } catch (\Exception $e) {
-            // Fallback for non-MySQL or drivers that don't support SHOW COLUMNS
+            $tableName = $grammar->validateIdentifier($table);
+            $columnName = $grammar->validateIdentifier($column);
+        } catch (\InvalidArgumentException $e) {
+            return false;
+        }
+
+        // Each driver knows its own catalog. A bare "SELECT col FROM t" doesn't
+        // work cross-dialect — SQLite silently treats unknown quoted identifiers
+        // as string literals, returning a row instead of an error.
+        if (method_exists($db, 'hasColumn')) {
             try {
-                $db->query("SELECT `{$column}` FROM `{$table}` LIMIT 1");
-                return true;
-            } catch (\Exception $e2) {
+                return (bool) $db->hasColumn($tableName, $columnName);
+            } catch (\Exception $e) {
                 return false;
             }
+        }
+
+        // Fallback (drivers without explicit hasColumn — e.g. NullDriver).
+        try {
+            $db->query(
+                "SELECT " . $grammar->wrap($columnName) . " FROM " . $grammar->wrapTable($tableName) . " LIMIT 0"
+            );
+            return true;
+        } catch (\Exception $e) {
+            return false;
         }
     }
 
@@ -391,14 +414,19 @@ class Schema
 
     public static function dropColumnIfExists(string $table, string $column): void
     {
-        if (self::hasColumn($table, $column)) {
-            $db = DB::connection();
-            // Wrap in try-catch in case the active driver doesn't support basic ALTER TABLE syntax
-            try {
-                $db->query("ALTER TABLE `{$table}` DROP COLUMN `{$column}`");
-            } catch (\Exception $e) {
-                // Ignore failure if column could not be dropped
-            }
+        if (!self::hasColumn($table, $column)) {
+            return;
+        }
+
+        $db = DB::connection();
+        $grammar = $db->getGrammar();
+        $tableName = $grammar->wrapTable($table);
+        $columnName = $grammar->wrap($column);
+
+        try {
+            $db->query("ALTER TABLE {$tableName} DROP COLUMN {$columnName}");
+        } catch (\Exception $e) {
+            // Driver may not support DROP COLUMN (e.g. older SQLite). Caller decides.
         }
     }
 }

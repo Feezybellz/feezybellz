@@ -12,6 +12,14 @@ class MySQLDriver implements DatabaseDriverInterface
     protected $grammar = null;
     protected $transactionDepth = 0;
 
+    /**
+     * Column-list cache per table.
+     * Populated on first `unselect(...)`-with-`*` lookup, reused across
+     * subsequent SELECTs. Cleared on disconnect().
+     * @var array<string, array<int, string>>
+     */
+    protected array $columnCache = [];
+
     public function getGrammar(): Grammar
     {
         if (!$this->grammar) {
@@ -33,6 +41,18 @@ class MySQLDriver implements DatabaseDriverInterface
         } catch (PDOException $e) {
             throw new \Exception("Database connection failed: " . $e->getMessage());
         }
+    }
+
+    /**
+     * Drop the underlying PDO so the next operation reconnects.
+     * Called by DB::purge() during dynamic tenant connection swaps to
+     * ensure no file descriptors leak across requests in long-running workers.
+     */
+    public function disconnect(): void
+    {
+        $this->connection = null;
+        $this->transactionDepth = 0;
+        $this->columnCache = [];
     }
 
     private function isConnectionLost(PDOException $e): bool
@@ -71,6 +91,7 @@ class MySQLDriver implements DatabaseDriverInterface
             }
         }
         $statement = $this->connection->prepare($query);
+        DB::emitListener($query, $params, $this);
         $statement->execute($params);
         return $statement;
     }
@@ -108,7 +129,7 @@ class MySQLDriver implements DatabaseDriverInterface
     private function handleCount(QueryBuilder $builder): int
     {
         $params = [];
-        $sql = "SELECT COUNT(*) as aggregate FROM `{$builder->table}` ";
+        $sql = "SELECT COUNT(*) as aggregate FROM " . $this->getGrammar()->wrapTable($builder->table) . " ";
         $sql .= $this->compileJoins($builder);
         $sql .= $this->compileWhere($builder, $params);
         $res = $this->query($sql, $params)->fetch(\PDO::FETCH_ASSOC);
@@ -118,8 +139,8 @@ class MySQLDriver implements DatabaseDriverInterface
     private function handleSum(QueryBuilder $builder): float
     {
         $params = [];
-        $column = $builder->aggregateColumn;
-        $sql = "SELECT SUM(`{$column}`) as aggregate FROM `{$builder->table}` ";
+        $column = $this->getGrammar()->wrap($builder->aggregateColumn);
+        $sql = "SELECT SUM({$column}) as aggregate FROM " . $this->getGrammar()->wrapTable($builder->table) . " ";
         $sql .= $this->compileWhere($builder, $params);
         $res = $this->query($sql, $params)->fetch(\PDO::FETCH_ASSOC);
         return (float) ($res['aggregate'] ?? 0);
@@ -128,8 +149,8 @@ class MySQLDriver implements DatabaseDriverInterface
     private function handleAvg(QueryBuilder $builder): float
     {
         $params = [];
-        $column = $builder->aggregateColumn;
-        $sql = "SELECT AVG(`{$column}`) as aggregate FROM `{$builder->table}` ";
+        $column = $this->getGrammar()->wrap($builder->aggregateColumn);
+        $sql = "SELECT AVG({$column}) as aggregate FROM " . $this->getGrammar()->wrapTable($builder->table) . " ";
         $sql .= $this->compileWhere($builder, $params);
         $res = $this->query($sql, $params)->fetch(\PDO::FETCH_ASSOC);
         return (float) ($res['aggregate'] ?? 0);
@@ -149,20 +170,19 @@ class MySQLDriver implements DatabaseDriverInterface
 
     private function handleInsert(QueryBuilder $builder)
     {
-        $table = $builder->table;
+        $table = $this->getGrammar()->wrapTable($builder->table);
         $data = $builder->data;
 
         if (empty($data)) {
             return false;
         }
 
-        // Check if it's a batch insert (array of arrays)
         $isBatch = isset($data[0]) && is_array($data[0]);
 
         if ($isBatch) {
             $columns = array_keys($data[0]);
-            $columnList = implode('`, `', $columns);
-            
+            $columnList = $this->wrapColumnList($columns);
+
             $values = [];
             $params = [];
             foreach ($data as $row) {
@@ -172,24 +192,34 @@ class MySQLDriver implements DatabaseDriverInterface
                     $params[] = $row[$col] ?? null;
                 }
             }
-            
-            $sql = "INSERT INTO `{$table}` (`{$columnList}`) VALUES " . implode(', ', $values);
+
+            $sql = "INSERT INTO {$table} ({$columnList}) VALUES " . implode(', ', $values);
             $this->query($sql, $params);
             return true;
-        } else {
-            $columns = implode('`, `', array_keys($data));
-            $placeholders = implode(', ', array_fill(0, count($data), '?'));
-            
-            $sql = "INSERT INTO `{$table}` (`{$columns}`) VALUES ({$placeholders})";
-            $this->query($sql, array_values($data));
-            
-            return $this->lastInsertId();
         }
+
+        $columnList = $this->wrapColumnList(array_keys($data));
+        $placeholders = implode(', ', array_fill(0, count($data), '?'));
+
+        $sql = "INSERT INTO {$table} ({$columnList}) VALUES ({$placeholders})";
+        $this->query($sql, array_values($data));
+
+        return $this->lastInsertId();
+    }
+
+    /**
+     * Validate and wrap a list of column names for INSERT/UPDATE column-lists.
+     */
+    private function wrapColumnList(array $columns): string
+    {
+        return implode(', ', array_map(function ($c) {
+            return '`' . $this->getGrammar()->validateIdentifier($c) . '`';
+        }, $columns));
     }
 
     private function handleUpsert(QueryBuilder $builder)
     {
-        $table = $builder->table;
+        $table = $this->getGrammar()->wrapTable($builder->table);
         $data = $builder->data;
         $uniqueBy = $builder->uniqueBy;
 
@@ -197,18 +227,19 @@ class MySQLDriver implements DatabaseDriverInterface
 
         $isBatch = isset($data[0]) && is_array($data[0]);
         $rows = $isBatch ? $data : [$data];
-        
+
         $columns = array_keys($rows[0]);
-        $columnList = implode('`, `', $columns);
-        
+        $columnList = $this->wrapColumnList($columns);
+
         $updateParts = [];
         foreach ($columns as $col) {
-            if (!in_array($col, $uniqueBy)) {
-                $updateParts[] = "`{$col}` = VALUES(`{$col}`)";
+            if (!in_array($col, $uniqueBy, true)) {
+                $wrapped = '`' . $this->getGrammar()->validateIdentifier($col) . '`';
+                $updateParts[] = "{$wrapped} = VALUES({$wrapped})";
             }
         }
         $updateSql = implode(', ', $updateParts);
-        
+
         $values = [];
         $params = [];
         foreach ($rows as $row) {
@@ -218,31 +249,31 @@ class MySQLDriver implements DatabaseDriverInterface
                 $params[] = $row[$col] ?? null;
             }
         }
-        
-        $sql = "INSERT INTO `{$table}` (`{$columnList}`) VALUES " . implode(', ', $values);
+
+        $sql = "INSERT INTO {$table} ({$columnList}) VALUES " . implode(', ', $values);
         if (!empty($updateSql)) {
             $sql .= " ON DUPLICATE KEY UPDATE {$updateSql}";
         }
-        
+
         $this->query($sql, $params);
         return true;
     }
 
     private function handleUpdate(QueryBuilder $builder)
     {
-        $table = $builder->table;
+        $table = $this->getGrammar()->wrapTable($builder->table);
         $data = $builder->data;
         $params = [];
-        
+
         $sets = [];
         foreach ($data as $col => $val) {
-            $sets[] = "`{$col}` = ?";
+            $sets[] = '`' . $this->getGrammar()->validateIdentifier($col) . '` = ?';
             $params[] = $val;
         }
-        
-        $sql = "UPDATE `{$table}` SET " . implode(', ', $sets);
+
+        $sql = "UPDATE {$table} SET " . implode(', ', $sets);
         $sql .= $this->compileWhere($builder, $params);
-        
+
         $stmt = $this->query($sql, $params);
         return $stmt->rowCount();
     }
@@ -272,12 +303,12 @@ class MySQLDriver implements DatabaseDriverInterface
 
     private function handleDelete(QueryBuilder $builder)
     {
-        $table = $builder->table;
+        $table = $this->getGrammar()->wrapTable($builder->table);
         $params = [];
-        
-        $sql = "DELETE FROM `{$table}`";
+
+        $sql = "DELETE FROM {$table}";
         $sql .= $this->compileWhere($builder, $params);
-        
+
         $stmt = $this->query($sql, $params);
         return $stmt->rowCount();
     }
@@ -325,6 +356,12 @@ class MySQLDriver implements DatabaseDriverInterface
             $column = $this->getGrammar()->wrap($w['column']);
             
             if ($operator === 'IN' || $operator === 'NOT IN') {
+                if (empty($w['value'])) {
+                    // MySQL rejects empty IN-lists. Render an always-false/true
+                    // clause so the query still compiles and preserves intent.
+                    $clauses[] = $operator === 'IN' ? "{$boolean}1=0" : "{$boolean}1=1";
+                    continue;
+                }
                 $placeholders = implode(', ', array_fill(0, count($w['value']), '?'));
                 $clauses[] = "{$boolean}{$column} {$operator} ({$placeholders})";
                 foreach ($w['value'] as $val) {
@@ -375,20 +412,26 @@ class MySQLDriver implements DatabaseDriverInterface
 
         if (!empty($builder->unselect)) {
             if (count($select) === 1 && $select[0] === '*') {
-                $stmt = $this->connection->query("SHOW COLUMNS FROM `{$builder->table}`");
-                $allColumns = $stmt->fetchAll(\PDO::FETCH_COLUMN);
-                $select = array_diff($allColumns, $builder->unselect);
+                // Per-connection cache: SHOW COLUMNS is cheap but pointless
+                // to re-run for every unselect(*) SELECT. Invalidated on
+                // disconnect() (and any subsequent schema change requires
+                // a driver restart anyway).
+                $tableName = $this->getGrammar()->validateIdentifier($builder->table);
+                if (!isset($this->columnCache[$tableName])) {
+                    $stmt = $this->query("SHOW COLUMNS FROM " . $this->getGrammar()->wrapTable($builder->table));
+                    $this->columnCache[$tableName] = $stmt->fetchAll(\PDO::FETCH_COLUMN);
+                }
+                $select = array_diff($this->columnCache[$tableName], $builder->unselect);
             } else {
                 $select = array_diff($select, $builder->unselect);
             }
-            if (empty($select)) $select = ['id']; 
+            if (empty($select)) $select = ['id'];
         }
 
-        // Process columns to add backticks where appropriate (simple columns only)
         $formattedSelect = array_map(function($col) {
             $col = trim($col);
-            
-            // Handle Aliases: "table.column as alias" or "column as alias" or "column alias"
+
+            // "table.column as alias" or "column as alias" or "column alias"
             if (preg_match('/^(.+?)\s+(?:as\s+)?(\w+)$/i', $col, $matches)) {
                 return $this->getGrammar()->wrap($matches[1]) . " AS `{$matches[2]}`";
             }
@@ -396,7 +439,8 @@ class MySQLDriver implements DatabaseDriverInterface
             return $this->getGrammar()->wrap($col);
         }, $select);
 
-        $sql = "SELECT " . implode(', ', $formattedSelect) . " FROM " . $this->getGrammar()->wrap($builder->table) . " ";
+        $sql = "SELECT " . implode(', ', $formattedSelect)
+             . " FROM " . $this->getGrammar()->wrapTable($builder->table) . " ";
         $sql .= $this->compileJoins($builder);
         $params = [];
         $sql .= $this->compileWhere($builder, $params);
@@ -414,15 +458,16 @@ class MySQLDriver implements DatabaseDriverInterface
 
         if (!empty($builder->orderBy)) {
             $orders = array_map(function($o) {
-                return $this->getGrammar()->wrap($o['column']) . " {$o['direction']}";
+                $direction = strtoupper($o['direction']) === 'DESC' ? 'DESC' : 'ASC';
+                return $this->getGrammar()->wrap($o['column']) . " {$direction}";
             }, $builder->orderBy);
             $sql .= " ORDER BY " . implode(', ', $orders);
         }
 
         if ($builder->limit !== null) {
-            $sql .= " LIMIT {$builder->limit}";
+            $sql .= " LIMIT " . (int) $builder->limit;
             if ($builder->offset !== null) {
-                $sql .= " OFFSET {$builder->offset}";
+                $sql .= " OFFSET " . (int) $builder->offset;
             }
         }
 
@@ -435,9 +480,9 @@ class MySQLDriver implements DatabaseDriverInterface
 
     public function insert(string $table, array $data)
     {
-        $columns = implode('`, `', array_keys($data));
+        $columns = $this->wrapColumnList(array_keys($data));
         $placeholders = implode(', ', array_fill(0, count($data), '?'));
-        $sql = "INSERT INTO " . $this->getGrammar()->wrap($table) . " (`{$columns}`) VALUES ({$placeholders})";
+        $sql = "INSERT INTO " . $this->getGrammar()->wrapTable($table) . " ({$columns}) VALUES ({$placeholders})";
         $formattedValues = array_map([$this->getGrammar(), 'formatDate'], array_values($data));
         return $this->query($sql, $formattedValues);
     }
@@ -447,15 +492,16 @@ class MySQLDriver implements DatabaseDriverInterface
         $set = [];
         $params = [];
         foreach ($data as $key => $value) {
-            $set[] = "`{$key}` = ?";
+            $set[] = '`' . $this->getGrammar()->validateIdentifier($key) . '` = ?';
             $params[] = $this->getGrammar()->formatDate($value);
         }
         $whereClause = [];
         foreach ($where as $key => $value) {
-            $whereClause[] = "`{$key}` = ?";
+            $whereClause[] = '`' . $this->getGrammar()->validateIdentifier($key) . '` = ?';
             $params[] = $this->getGrammar()->formatDate($value);
         }
-        $sql = "UPDATE " . $this->getGrammar()->wrap($table) . " SET " . implode(', ', $set) . " WHERE " . implode(' AND ', $whereClause);
+        $sql = "UPDATE " . $this->getGrammar()->wrapTable($table) . " SET " . implode(', ', $set)
+             . " WHERE " . implode(' AND ', $whereClause);
         return $this->query($sql, $params);
     }
 
@@ -464,10 +510,10 @@ class MySQLDriver implements DatabaseDriverInterface
         $whereClause = [];
         $params = [];
         foreach ($where as $key => $value) {
-            $whereClause[] = "`{$key}` = ?";
+            $whereClause[] = '`' . $this->getGrammar()->validateIdentifier($key) . '` = ?';
             $params[] = $value;
         }
-        $sql = "DELETE FROM " . $this->getGrammar()->wrap($table) . " WHERE " . implode(' AND ', $whereClause);
+        $sql = "DELETE FROM " . $this->getGrammar()->wrapTable($table) . " WHERE " . implode(' AND ', $whereClause);
         return $this->query($sql, $params);
     }
 
@@ -483,7 +529,8 @@ class MySQLDriver implements DatabaseDriverInterface
 
     public function createStorage(Schema $schema): void
     {
-        $table = $schema->table;
+        $tableName = $this->getGrammar()->validateIdentifier($schema->table);
+        $table = $this->getGrammar()->wrapTable($schema->table);
         $columnDefs = [];
 
         foreach ($schema->columns as $col) {
@@ -491,43 +538,61 @@ class MySQLDriver implements DatabaseDriverInterface
         }
 
         foreach ($schema->foreignKeys as $fk) {
-            $constraintName = "fk_{$schema->table}_{$fk['column']}";
-            $columnDefs[] = "CONSTRAINT `{$constraintName}` FOREIGN KEY (`{$fk['column']}`) REFERENCES `{$fk['on']}`(`{$fk['references']}`) ON DELETE {$fk['onDelete']} ON UPDATE {$fk['onUpdate']}";
+            $col   = $this->getGrammar()->validateIdentifier($fk['column']);
+            $refTb = $this->getGrammar()->validateIdentifier($fk['on']);
+            $refCol = $this->getGrammar()->validateIdentifier($fk['references']);
+            $onDel = $this->normalizeFkAction($fk['onDelete'] ?? 'RESTRICT');
+            $onUpd = $this->normalizeFkAction($fk['onUpdate'] ?? 'CASCADE');
+            $constraintName = "fk_{$tableName}_{$col}";
+            $columnDefs[] = "CONSTRAINT `{$constraintName}` FOREIGN KEY (`{$col}`) REFERENCES `{$refTb}`(`{$refCol}`) ON DELETE {$onDel} ON UPDATE {$onUpd}";
         }
 
         if ($schema->primaryKey && strpos(strtoupper(implode('', $columnDefs)), 'PRIMARY KEY') === false) {
-            $columnDefs[] = "PRIMARY KEY (`{$schema->primaryKey}`)";
+            $pk = $this->getGrammar()->validateIdentifier($schema->primaryKey);
+            $columnDefs[] = "PRIMARY KEY (`{$pk}`)";
         }
 
-        $sql = "CREATE TABLE IF NOT EXISTS `{$table}` (" . implode(', ', $columnDefs) . ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+        $sql = "CREATE TABLE IF NOT EXISTS {$table} (" . implode(', ', $columnDefs) . ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
         $this->query($sql);
         $this->createIndexes($schema);
     }
 
     public function alterStorage(Schema $schema): void
     {
-        $table = $schema->table;
+        $table = $this->getGrammar()->wrapTable($schema->table);
         $clauses = [];
 
         foreach ($schema->droppedColumns as $column) {
-            $clauses[] = "DROP COLUMN `{$column}`";
+            $col = $this->getGrammar()->validateIdentifier($column);
+            $clauses[] = "DROP COLUMN `{$col}`";
         }
 
         foreach ($schema->columns as $column) {
             $definition = $this->buildColumnDefinition($column);
             $action = isset($column['modify']) && $column['modify'] ? 'MODIFY COLUMN' : 'ADD COLUMN';
-            $after = isset($column['after']) ? " AFTER `{$column['after']}`" : '';
+            $after = '';
+            if (isset($column['after'])) {
+                $afterCol = $this->getGrammar()->validateIdentifier($column['after']);
+                $after = " AFTER `{$afterCol}`";
+            }
             $clauses[] = "{$action} {$definition}{$after}";
         }
 
         if (empty($clauses)) return;
-        $sql = "ALTER TABLE `{$table}` " . implode(', ', $clauses);
+        $sql = "ALTER TABLE {$table} " . implode(', ', $clauses);
         $this->query($sql);
+    }
+
+    private function normalizeFkAction(string $action): string
+    {
+        $action = strtoupper(trim($action));
+        $allowed = ['CASCADE', 'RESTRICT', 'SET NULL', 'SET DEFAULT', 'NO ACTION'];
+        return in_array($action, $allowed, true) ? $action : 'RESTRICT';
     }
 
     protected function buildColumnDefinition(array $col): string
     {
-        $name = $col['name'];
+        $name = $this->getGrammar()->validateIdentifier($col['name']);
         $type = strtoupper($col['type']);
 
         switch ($type) {
@@ -609,21 +674,43 @@ class MySQLDriver implements DatabaseDriverInterface
 
     private function createIndexes(Schema $schema): void
     {
+        $table = $this->getGrammar()->validateIdentifier($schema->table);
         foreach (array_merge($schema->indexes, $schema->uniqueIndexes) as $index) {
             $type = (isset($index['unique']) || strpos($index['name'], 'uniq_') !== false) ? 'UNIQUE INDEX' : 'INDEX';
-            $cols = implode('`, `', $index['columns']);
-            $sql = "CREATE {$type} `{$index['name']}` ON `{$schema->table}` (`{$cols}`)";
-            try { $this->query($sql); } catch (\Exception $e) {}
+            $cols = implode(', ', array_map(function ($c) {
+                return '`' . $this->getGrammar()->validateIdentifier($c) . '`';
+            }, $index['columns']));
+            $idxName = $this->getGrammar()->validateIdentifier($index['name']);
+            $sql = "CREATE {$type} `{$idxName}` ON `{$table}` ({$cols})";
+            try { $this->query($sql); } catch (\Exception $e) { /* already exists */ }
         }
     }
 
     public function dropStorage(string $name): void
     {
-        $this->query("DROP TABLE IF EXISTS `{$name}`");
+        $this->query("DROP TABLE IF EXISTS " . $this->getGrammar()->wrapTable($name));
+    }
+
+    /**
+     * Check whether a column exists. Used by Schema::hasColumn().
+     */
+    public function hasColumn(string $table, string $column): bool
+    {
+        $table = $this->getGrammar()->validateIdentifier($table);
+        $column = $this->getGrammar()->validateIdentifier($column);
+
+        $stmt = $this->query(
+            "SELECT 1 FROM information_schema.columns
+             WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
+             LIMIT 1",
+            [$table, $column]
+        );
+        return (bool) $stmt->fetchColumn();
     }
 
     public function ensureMigrationTracking(string $tableName): void
     {
+        $tableName = $this->getGrammar()->validateIdentifier($tableName);
         $sql = "CREATE TABLE IF NOT EXISTS `{$tableName}` (
             id INT AUTO_INCREMENT PRIMARY KEY,
             migration VARCHAR(255) NOT NULL,

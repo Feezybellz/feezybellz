@@ -20,11 +20,28 @@ class Kernel
     ];
 
     /**
-     * Route-specific middleware that can be assigned to individual routes
+     * Framework-shipped middleware aliases.
+     *
+     * These are the "out of the box" middleware names a developer can attach
+     * to a route or group without writing a line of PHP — e.g. `'csrf'`,
+     * `'cors:public'`, `'security:strict'`.
+     *
+     * Each alias points to a class in `core/Http/Middleware/` whose behavior
+     * is configured by a file in `config/` of the same name (cors.php,
+     * csrf.php, security_headers.php, etc.). Apps tune behavior by editing
+     * those configs, not by editing this array.
+     *
+     * To register *additional* aliases (e.g. an app's own AuthMiddleware),
+     * use `app/Middleware/aliases.php` — it loads after this array, so app
+     * aliases extend or override these defaults without touching framework
+     * source.
      */
     protected array $routeMiddleware = [
-        'csrf' => \App\Middleware\CsrfMiddleware::class,
-        'cors' => \App\Middleware\CorsMiddleware::class,
+        'csrf'     => \Framework\Core\Http\Middleware\CsrfMiddleware::class,
+        'cors'     => \Framework\Core\Http\Middleware\CorsMiddleware::class,
+        'security' => \Framework\Core\Http\Middleware\SecurityHeadersMiddleware::class,
+        'throttle' => \Framework\Core\Http\Middleware\ThrottleRequests::class,
+        'waf'      => \Framework\Core\Http\Middleware\WafMiddleware::class,
     ];
 
     public function __construct(Application $app)
@@ -40,6 +57,14 @@ class Kernel
     {
         try {
             $this->bootstrap($request);
+
+            // Give this request an ID and stash it on Log so every log line
+            // emitted while handling this request carries it. Client can
+            // supply X-Request-Id to correlate with upstream traces; if
+            // absent, we generate one.
+            $requestId = (string) ($request->header('X-Request-Id') ?: bin2hex(random_bytes(8)));
+            \Framework\Core\Logging\Log::setContext(['request_id' => $requestId]);
+            $request->setParam('_request_id', $requestId);
             
             $response = new Response();
             Router::init($request, $response);
@@ -54,12 +79,12 @@ class Kernel
                 require_once $aliasesFile;
             }
 
-            // Built-in framework asset routes
+            // Built-in framework asset routes (always fresh — not cached).
             Router::get('/websocket.js', function (\Framework\Core\Http\Request $request, \Framework\Core\Http\Response $response) {
                 $path = base_path('core/WebSocket/websocket.js');
                 if (file_exists($path)) {
                     $response->setHeader('Content-Type', 'application/javascript');
-                    $response->setHeader('Cache-Control', 'no-cache, must-revalidate'); // Ensure changes load immediately
+                    $response->setHeader('Cache-Control', 'no-cache, must-revalidate');
                     $response->setContent(file_get_contents($path));
                     return $response;
                 }
@@ -68,12 +93,29 @@ class Kernel
                 return $response;
             });
 
-            // Load application routes
-            Router::loadRoutesFrom($this->app->basePath('routes'));
+            // Application routes: cache-first. If `php console route:cache` has
+            // been run, `bootstrap/cache/routes.php` exists and we bypass the
+            // recursive file walk entirely. Otherwise fall back to loading
+            // from disk. Framework-internal routes above are always added
+            // fresh so they can evolve between framework versions without
+            // invalidating a user's cache.
+            $cachedRoutes = $this->app->basePath('bootstrap/cache/routes.php');
+            if (file_exists($cachedRoutes)) {
+                Router::loadCachedRoutes($cachedRoutes);
+                // Optional dev-mode staleness check: warn (once per request)
+                // if any file under routes/ is newer than the cache.
+                if (function_exists('config') && config('app.debug')) {
+                    $this->warnIfCacheIsStale($cachedRoutes);
+                }
+            } else {
+                Router::loadRoutesFrom($this->app->basePath('routes'));
+            }
             
             $result = Router::dispatch($request, $response);
-
-            return ($result instanceof Response) ? $result : $response->setContent($result);
+            $finalResponse = ($result instanceof Response) ? $result : $response->setContent($result);
+            // Echo the request id back so callers can correlate.
+            $finalResponse->header('X-Request-Id', $requestId);
+            return $finalResponse;
             
         } catch (\Throwable $e) {
             throw $e;
@@ -97,6 +139,15 @@ class Kernel
         if (file_exists($eventsPath)) {
             Dispatcher::register(require $eventsPath);
         }
+
+        // 4. N+1 detection in dev. Zero cost in production because we
+        //    never call install() when APP_DEBUG=false.
+        if (function_exists('config') && config('app.debug')) {
+            \Framework\Core\Database\NPlusOneDetector::install([
+                'threshold' => (int) (config('app.n_plus_one_threshold') ?? 10),
+                'throw'     => (bool) (config('app.n_plus_one_throws') ?? false),
+            ]);
+        }
     }
 
     /**
@@ -113,10 +164,37 @@ class Kernel
      */
     public function terminate(Request $request, Response $response): void
     {
-        $response->header('X-Frame-Options', 'DENY');
-        $response->header('X-Content-Type-Options', 'nosniff');
-        $response->header('X-XSS-Protection', '1; mode=block');
-        $response->header('Referrer-Policy', 'strict-origin-when-cross-origin');
-        $response->header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
+        // Security headers are now managed via SecurityHeadersMiddleware
+    }
+
+    /**
+     * Emit an E_USER_WARNING when the routes cache is older than any file
+     * under routes/. Only runs in debug mode; the mtime scan is cheap but
+     * pointless in production where the cache is authoritative.
+     */
+    protected function warnIfCacheIsStale(string $cachedRoutes): void
+    {
+        $cacheMtime = filemtime($cachedRoutes) ?: 0;
+        $routesDir = $this->app->basePath('routes');
+        if (!is_dir($routesDir)) return;
+
+        try {
+            $it = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($routesDir, \RecursiveDirectoryIterator::SKIP_DOTS)
+            );
+            foreach ($it as $file) {
+                if ($file->isFile() && $file->getExtension() === 'php'
+                    && $file->getMTime() > $cacheMtime) {
+                    trigger_error(
+                        "Route cache is stale: {$file->getPathname()} was modified after the cache was built. "
+                        . "Run `php console route:cache` to refresh.",
+                        E_USER_WARNING
+                    );
+                    return; // one warning per request is enough
+                }
+            }
+        } catch (\Throwable $e) {
+            // Nothing to do — the check is best-effort.
+        }
     }
 }

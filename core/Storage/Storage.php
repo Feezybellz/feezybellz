@@ -7,7 +7,8 @@ class Storage
     protected static $disks = [];
 
     /**
-     * Get a filesystem disk instance.
+     * Get a filesystem disk instance. Lazily builds from config on first use;
+     * subsequent calls return the cached instance for the same name.
      *
      * @param  string|null  $name
      * @return \Framework\Core\Storage\Drivers\StorageDriverInterface
@@ -15,12 +16,47 @@ class Storage
     public static function disk(?string $name = null)
     {
         $name = $name ?: config('filesystems.default');
-        
+
         if (!isset(self::$disks[$name])) {
             self::$disks[$name] = self::resolve($name);
         }
 
         return self::$disks[$name];
+    }
+
+    /**
+     * Bind an already-instantiated disk under a name. Use this for tests
+     * (inject an in-memory driver) or for long-running workers that need
+     * to swap tenants at runtime.
+     *
+     * @param string $name
+     * @param object $driver Any StorageDriverInterface instance.
+     */
+    public static function setDisk(string $name, $driver): void
+    {
+        self::$disks[$name] = $driver;
+    }
+
+    /**
+     * Forget one disk (or all disks if no name given). The next call to
+     * disk($name) will re-resolve from config.
+     */
+    public static function reset(?string $name = null): void
+    {
+        if ($name === null) {
+            self::$disks = [];
+            return;
+        }
+        unset(self::$disks[$name]);
+    }
+
+    /**
+     * Return the names of currently open disks. Handy for worker cleanup.
+     * @return string[]
+     */
+    public static function openDisks(): array
+    {
+        return array_keys(self::$disks);
     }
 
     /**

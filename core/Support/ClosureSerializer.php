@@ -1,131 +1,193 @@
 <?php
 
 /**
- * =============================================================================
  * ClosureSerializer — Extract, serialize, and reconstruct PHP Closures
- * =============================================================================
+ * over a process boundary (queue, socket, file).
  *
- * Works by using ReflectionFunction to locate the closure's source file and
- * line range, then token_get_all() to extract the exact source code. The
- * captured `use()` variables are serialized alongside the source so they can
- * be reinjected on the receiving end via `extract()` before eval().
+ * ┌────────────────────────────────────────────────────────────────────┐
+ * │ THIS CLASS CALLS eval() ON DECODED PAYLOADS.                       │
+ * │                                                                    │
+ * │ It is GATED behind two locks:                                      │
+ * │                                                                    │
+ * │  1. config('closure_serializer.enabled') must be true.             │
+ * │     deserialize() throws if not. Default is false; flip via env    │
+ * │     CLOSURE_SERIALIZER_ENABLED=true.                               │
+ * │                                                                    │
+ * │  2. The payload must carry an HMAC-SHA256 signature over the       │
+ * │     source+uses fields, signed with APP_KEY. deserialize() uses    │
+ * │     hash_equals to verify, in constant time, before eval() runs.   │
+ * │                                                                    │
+ * │ If APP_KEY leaks, anyone who can hand a payload to deserialize()   │
+ * │ has remote code execution. Treat this class like a key-signing     │
+ * │ ceremony — minimal callers, audit every entry point.               │
+ * └────────────────────────────────────────────────────────────────────┘
  *
- * Limitations (by design — no third-party deps):
+ * Other limitations (unchanged from the original design):
  *  - The closure source file must exist and be readable on the SERVER side.
- *  - Captured variables must be natively serializable (arrays, scalars,
- *    plain objects with no resource handles, Eloquent models, etc.).
- *  - `$this` binding is NOT supported (static closures only, or closures
- *    that do not reference $this).
- *  - Nested closures inside the closure body are extracted verbatim and will
- *    work as long as they don't themselves capture outer-scope variables that
- *    weren't already in the `use()` list.
- *
- * @package Framework\Core\Support
+ *  - Captured variables must be natively serializable.
+ *  - `$this` binding is NOT supported.
+ *  - Nested inner closures are extracted verbatim.
  */
 
 namespace Framework\Core\Support;
 
 class ClosureSerializer
 {
-    // ─── Public API ──────────────────────────────────────────────────────
+    private const VERSION = 2;
 
     /**
-     * Serialize a Closure into a portable string.
+     * Serialize a Closure into a signed, portable string.
      *
-     * The returned string can be stored, sent over a socket, put in a queue,
-     * etc. Pass it to deserialize() on the other end to get a callable back.
-     *
-     * @param  \Closure $closure
-     * @return string   Base64-encoded, JSON-wrapped serialized closure
-     *
-     * @throws \RuntimeException  If the source cannot be read or extracted
-     * @throws \RuntimeException  If any captured variable is not serializable
+     * @throws \RuntimeException If APP_KEY is missing or the source can't be read.
      */
     public static function serialize(\Closure $closure): string
     {
         $rf = new \ReflectionFunction($closure);
 
-        // ── 1. Extract source code ───────────────────────────────────────
         $source = self::extractSource($rf);
 
-        // ── 2. Capture `use()` variables ────────────────────────────────
         $uses = [];
         foreach ($rf->getStaticVariables() as $name => $value) {
-            // Verify each captured variable can survive a round-trip
             self::assertSerializable($name, $value);
             $uses[$name] = serialize($value);
         }
 
-        // ── 3. Pack into a JSON envelope and base64-encode ───────────────
-        $envelope = json_encode([
+        $body = json_encode([
+            'v'      => self::VERSION,
             'source' => $source,
             'uses'   => $uses,
         ]);
-
         if (json_last_error() !== JSON_ERROR_NONE) {
             throw new \RuntimeException('ClosureSerializer: JSON encode failed — ' . json_last_error_msg());
         }
+
+        $bodyB64 = base64_encode($body);
+        $signature = hash_hmac('sha256', $bodyB64, self::resolveSigningKey());
+
+        // The signature is part of the same outer envelope so it can't be
+        // stripped/recomputed by an attacker who can only modify the source.
+        $envelope = json_encode([
+            'body' => $bodyB64,
+            'sig'  => $signature,
+        ]);
 
         return base64_encode($envelope);
     }
 
     /**
-     * Reconstruct a Closure from a serialized string produced by serialize().
+     * Verify the signature and reconstruct the Closure.
      *
-     * @param  string   $data  The base64-encoded envelope from serialize()
-     * @return \Closure
+     * Refuses if:
+     *  - the feature is not enabled in config,
+     *  - the envelope is malformed,
+     *  - the signature doesn't match the configured key,
+     *  - the inner version is unsupported.
      *
-     * @throws \RuntimeException  If the data is corrupt or eval() fails
+     * @throws \RuntimeException
      */
     public static function deserialize(string $data): \Closure
     {
-        // ── 1. Decode & unpack ───────────────────────────────────────────
-        $json = base64_decode($data, true);
-        if ($json === false) {
-            throw new \RuntimeException('ClosureSerializer: base64 decode failed — data is corrupt.');
-        }
-
-        $envelope = json_decode($json, true);
-        if (json_last_error() !== JSON_ERROR_NONE) {
-             throw new \RuntimeException('ClosureSerializer: JSON decode failed — ' . json_last_error_msg());
-        }
-
-        $source = $envelope['source'] ?? null;
-        $uses   = $envelope['uses']   ?? [];
-
-        if (!is_string($source) || trim($source) === '') {
-            throw new \RuntimeException('ClosureSerializer: missing or empty source in envelope.');
-        }
-
-        // ── 2. Restore captured variables into local scope ───────────────
-        //    extract() puts them as local variables, which the eval'd closure
-        //    can then reference normally.
-        $restored = [];
-        foreach ($uses as $name => $serialized) {
-            $restored[$name] = unserialize($serialized);
-        }
-        extract($restored, EXTR_SKIP); // EXTR_SKIP: never overwrite existing locals
-
-        // ── 3. Evaluate the closure source ──────────────────────────────
-        //    The source already contains the `use (...)` clause extracted
-        //    from the original file, so variables are bound automatically.
-        $closure = null;
-        try {
-            // Wrap in an immediately-invoked assignment so we can capture it
-            eval('$closure = ' . $source . ';');
-        } catch (\Throwable $e) {
+        if (!self::enabled()) {
             throw new \RuntimeException(
-                'ClosureSerializer: eval() failed — ' . $e->getMessage() . "\n\nSource:\n" . $source,
-                0,
-                $e
+                'ClosureSerializer: deserialize() is disabled. Set config(\'closure_serializer.enabled\') = true '
+                . 'and supply APP_KEY only if you have a hard requirement.'
             );
         }
 
-        if (!($closure instanceof \Closure)) {
-            throw new \RuntimeException('ClosureSerializer: eval() did not produce a Closure.');
+        $outer = base64_decode($data, true);
+        if ($outer === false) {
+            throw new \RuntimeException('ClosureSerializer: outer base64 decode failed.');
+        }
+        $envelope = json_decode($outer, true);
+        if (!is_array($envelope) || !isset($envelope['body'], $envelope['sig'])
+            || !is_string($envelope['body']) || !is_string($envelope['sig'])) {
+            throw new \RuntimeException('ClosureSerializer: envelope missing required fields.');
         }
 
-        return $closure;
+        $expected = hash_hmac('sha256', $envelope['body'], self::resolveSigningKey());
+        if (!hash_equals($expected, $envelope['sig'])) {
+            throw new \RuntimeException('ClosureSerializer: signature verification failed. Refusing to eval().');
+        }
+
+        $bodyJson = base64_decode($envelope['body'], true);
+        if ($bodyJson === false) {
+            throw new \RuntimeException('ClosureSerializer: inner base64 decode failed.');
+        }
+        $body = json_decode($bodyJson, true);
+        if (!is_array($body)) {
+            throw new \RuntimeException('ClosureSerializer: inner JSON decode failed.');
+        }
+
+        $version = (int) ($body['v'] ?? 1);
+        if ($version !== self::VERSION) {
+            throw new \RuntimeException(
+                "ClosureSerializer: payload version {$version} is not supported by this framework version."
+            );
+        }
+
+        $source = $body['source'] ?? null;
+        $uses   = $body['uses']   ?? [];
+
+        if (!is_string($source) || trim($source) === '') {
+            throw new \RuntimeException('ClosureSerializer: missing or empty source.');
+        }
+
+        $restored = [];
+        foreach ($uses as $name => $serialized) {
+            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', (string) $name)) {
+                // A malformed `uses` key would let unserialize() be steered.
+                throw new \RuntimeException("ClosureSerializer: invalid use-variable name: {$name}");
+            }
+            $restored[$name] = unserialize((string) $serialized);
+        }
+        // Confine the eval() to a static closure so it can't see our locals.
+        $build = static function (array $restored, string $source): \Closure {
+            extract($restored, EXTR_SKIP);
+            $closure = null;
+            try {
+                eval('$closure = ' . $source . ';');
+            } catch (\Throwable $e) {
+                throw new \RuntimeException(
+                    'ClosureSerializer: eval() failed — ' . $e->getMessage(), 0, $e
+                );
+            }
+            if (!($closure instanceof \Closure)) {
+                throw new \RuntimeException('ClosureSerializer: eval() did not produce a Closure.');
+            }
+            return $closure;
+        };
+
+        return $build($restored, $source);
+    }
+
+    /**
+     * Whether deserialization is allowed in this environment.
+     */
+    public static function enabled(): bool
+    {
+        if (!function_exists('config')) {
+            return false;
+        }
+        return (bool) config('closure_serializer.enabled', false);
+    }
+
+    /**
+     * Resolve the HMAC key. We deliberately reuse APP_KEY rather than introducing
+     * a separate key — there's no point having two secrets, and this guarantees
+     * that anywhere APP_KEY is missing, this feature is dead.
+     */
+    private static function resolveSigningKey(): string
+    {
+        $key = (function_exists('config') ? config('app.key') : null) ?? ($_ENV['APP_KEY'] ?? null);
+        if (empty($key)) {
+            throw new \RuntimeException(
+                'ClosureSerializer: APP_KEY is not configured. Refusing to sign or verify payloads.'
+            );
+        }
+        if (strpos($key, 'base64:') === 0) {
+            $key = base64_decode(substr($key, 7));
+        }
+        return $key;
     }
 
     // ─── Private Helpers ─────────────────────────────────────────────────

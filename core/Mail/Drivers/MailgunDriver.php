@@ -10,11 +10,15 @@ class MailgunDriver implements MailDriverInterface
     protected string $secret;
     protected string $endpoint;
 
-    public function __construct()
+    public function __construct(array $config = [])
     {
-        $this->domain = env('MAILGUN_DOMAIN', '');
-        $this->secret = env('MAILGUN_SECRET', '');
-        $this->endpoint = env('MAILGUN_ENDPOINT', 'api.mailgun.net');
+        // Prefer explicit injected config; fall back to config('mail.mailgun.*').
+        // env() is no longer read directly here — the mail config file is the
+        // single source of truth. Tests inject $config to swap credentials.
+        $cfg = $config + (array) (function_exists('config') ? config('mail.mailgun') : []);
+        $this->domain   = (string) ($cfg['domain']   ?? '');
+        $this->secret   = (string) ($cfg['secret']   ?? '');
+        $this->endpoint = (string) ($cfg['endpoint'] ?? 'api.mailgun.net');
     }
 
     public function send($to, string $subject, string $body, array $headers = [], array $attachments = [], bool $isHtml = true): bool
@@ -26,7 +30,9 @@ class MailgunDriver implements MailDriverInterface
         $url = "https://{$this->endpoint}/v3/{$this->domain}/messages";
 
         $postData = [
-            'from'    => $headers['From'] ?? env('MAIL_FROM_ADDRESS', 'system@' . $this->domain),
+            'from'    => $headers['From']
+                          ?? (function_exists('config') ? config('mail.from.address') : null)
+                          ?? ('system@' . $this->domain),
             'to'      => is_array($to) ? implode(',', $to) : $to,
             'subject' => $subject,
         ];

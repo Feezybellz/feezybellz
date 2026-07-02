@@ -121,8 +121,9 @@ class UploadedFile
     {
         $units = ['B', 'KB', 'MB', 'GB'];
         $size = $this->size;
+        $i = 0; // initialize so empty files (size = 0) don't produce a PHP 8 warning
 
-        for ($i = 0; $size >= 1024 && $i < count($units) - 1; $i++) {
+        for (; $size >= 1024 && $i < count($units) - 1; $i++) {
             $size /= 1024;
         }
 
@@ -265,11 +266,17 @@ class UploadedFile
     // ==========================================
 
     /**
-     * Move the uploaded file to a destination directory
-     * 
+     * Move the uploaded file to a destination directory.
+     *
+     * The filename is sanitized before use:
+     *   - Path separators, null bytes, control chars stripped.
+     *   - Directory traversal attempts (`../`, `..\\`) removed.
+     *   - Result is basename()'d so no matter what junk the caller passes,
+     *     the file lands in $directory and only in $directory.
+     *
      * @param string $directory  Target directory path
-     * @param string|null $name  Custom filename (null = auto-generated unique name)
-     * @return string|false      The full path to the stored file, or false on failure
+     * @param string|null $name  Custom filename (null = generated unique name)
+     * @return string|false      Full path to stored file, or false on failure
      */
     public function store(string $directory, $name = null)
     {
@@ -281,25 +288,61 @@ class UploadedFile
             mkdir($directory, 0755, true);
         }
 
-        $filename = $name ?? $this->generateUniqueName();
+        $filename = $name === null
+            ? $this->generateUniqueName()
+            : self::sanitizeFilename((string) $name, $this->getClientOriginalExtension());
         $destination = rtrim($directory, '/') . '/' . $filename;
 
         if (move_uploaded_file($this->tempPath, $destination)) {
             return $destination;
         }
-
         return false;
     }
 
     /**
-     * Move the uploaded file, preserving the original file name
-     * 
-     * @param string $directory
-     * @return string|false
+     * Store using the client-supplied filename, SANITIZED.
+     *
+     * WARNING: preserving client-controlled filenames on disk is a common
+     * upload footgun. Even after sanitizing, an attacker can still upload
+     * (say) `evil.svg` or `malicious.html`, and if the storage directory is
+     * web-served, browsers execute those. The framework's default local
+     * disk points OUTSIDE the web root (`storage/uploads`) for exactly this
+     * reason — override at your own peril. Prefer store() (auto-name) unless
+     * you have a strong reason to keep the client name.
      */
     public function storeAs(string $directory)
     {
-        return $this->store($directory, $this->originalName);
+        return $this->store(
+            $directory,
+            self::sanitizeFilename($this->originalName, $this->getClientOriginalExtension())
+        );
+    }
+
+    /**
+     * Reduce an arbitrary filename to something safe to land on disk:
+     *  - basename() strips any embedded path.
+     *  - Strip null bytes and ASCII control characters.
+     *  - Replace runs of unsafe characters with a single '-'.
+     *  - Truncate to 200 chars so filesystem limits don't bite.
+     *  - Re-append the original extension if the sanitized name lost it.
+     */
+    public static function sanitizeFilename(string $name, string $ext = ''): string
+    {
+        $name = basename($name);
+        $name = str_replace(["\0"], '', $name);
+        $name = preg_replace('/[\x00-\x1f\x7f]+/u', '', $name);
+        $name = preg_replace('/[^A-Za-z0-9._-]+/u', '-', (string) $name);
+        $name = trim((string) $name, '.-');
+        if ($name === '') {
+            $name = 'file';
+        }
+        if ($ext !== '' && !str_ends_with(strtolower($name), '.' . strtolower($ext))) {
+            $name .= '.' . $ext;
+        }
+        if (strlen($name) > 200) {
+            $name = substr($name, 0, 200);
+        }
+        return $name;
     }
 
     /**

@@ -7,18 +7,26 @@ use Framework\Core\Routing\Router;
 | Application Middleware Aliases
 |--------------------------------------------------------------------------
 |
-| Here you may register all of the middleware aliases for your application.
-| These aliases can be used to quickly attach middleware to routes or 
-| route groups without needing to specify the full namespace.
+| Register YOUR app's middleware aliases here. The framework's built-in
+| aliases (csrf, cors, security, throttle, waf) are already registered in
+| core/Http/Kernel.php and don't need to be re-listed unless you want to
+| override one with your own subclass.
 |
+| This file is loaded after the Kernel's $routeMiddleware array, so any
+| alias you register here takes precedence on key collision.
+|
+| Example: register an app-specific auth middleware
+|
+|     Router::aliasMiddleware([
+|         'auth'      => \App\Middleware\AuthMiddleware::class,
+|         'admin'     => \App\Middleware\RequireAdmin::class,
+|     ]);
+|
+| Example: override a framework default with your own subclass
+|
+|     Router::registerAlias('csrf', \App\Middleware\MyCustomCsrf::class);
 */
 
 Router::aliasMiddleware([
-    'throttle' => \Framework\Core\Http\Middleware\ThrottleRequests::class,
-    'waf'      => \Framework\Core\Http\Middleware\WafMiddleware::class,
-    'csrf'     => \App\Middleware\CsrfMiddleware::class,
-    'cors'     => \App\Middleware\CorsMiddleware::class,
+    // Add app aliases here.
 ]);
-
-// You can also register them individually!
-// Router::registerAlias('auth', \App\Middleware\AuthMiddleware::class);

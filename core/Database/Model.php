@@ -309,6 +309,31 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         return $this;
     }
 
+    /**
+     * Add a raw SQL expression to the SELECT list. Caller owns the SQL.
+     * Use this for COUNT(*), aggregates, CASE WHEN, etc. — anything the
+     * strict identifier check correctly rejects from `select()`.
+     */
+    protected function _selectRaw(string $expression): self
+    {
+        $this->isChaining = true;
+        $this->querySelect[] = '(' . $expression . ')';
+        return $this;
+    }
+
+    /**
+     * Order by a raw SQL fragment. Caller owns the SQL.
+     */
+    protected function _orderByRaw(string $expression, string $direction = 'ASC'): self
+    {
+        $this->isChaining = true;
+        $this->queryOrderBy[] = [
+            'column' => '(' . $expression . ')',
+            'direction' => strtoupper($direction) === 'DESC' ? 'DESC' : 'ASC',
+        ];
+        return $this;
+    }
+
     protected function _join(string $table, string $first, string $operator, string $second, string $type = 'INNER'): self
     {
         $this->isChaining = true;
@@ -419,14 +444,23 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         $perPage = max(1, min(100, $perPage));
         $offset  = ($page - 1) * $perPage;
 
-        // Count total records without pagination constraints
-        $total = $this->buildQuery()->count();
+        // Count total records BEFORE mutating any state. Use a clone so
+        // this method has no side effects on the parent Model instance
+        // (previously $this->queryLimit was clobbered mid-flight, which
+        // made re-using the model after a paginate() call give wrong
+        // results).
+        $countClone = clone $this;
+        $countClone->queryLimit = null;
+        $countClone->queryOffset = null;
+        $total = $countClone->buildQuery()->count();
 
-        // Apply pagination to the model state and fetch
-        $this->queryLimit = $perPage;
-        $this->queryOffset = $offset;
-        
-        $builder = $this->buildQuery();
+        // Similarly, isolate the fetch. The parent instance is unchanged
+        // after this method returns.
+        $fetchClone = clone $this;
+        $fetchClone->queryLimit = $perPage;
+        $fetchClone->queryOffset = $offset;
+
+        $builder = $fetchClone->buildQuery();
         $models = [];
         foreach ($builder->get() as $row) {
             $attributes = is_object($row) ? (array) $row : $row;
@@ -437,7 +471,7 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         }
 
         return [
-            'data'       => $this->loadRelations($models),
+            'data'       => $fetchClone->loadRelations($models),
             'pagination' => [
                 'current_page' => $page,
                 'per_page'     => $perPage,
@@ -801,6 +835,24 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         return $this->loadRelations($models);
     }
 
+    /**
+     * Build a fresh QueryBuilder pre-populated with this Model's accumulated
+     * where/join/order state. Exposed publicly so callers can drop down into
+     * raw QueryBuilder features (locking, sub-queries, driver-specific ops)
+     * without abandoning the Model's chain.
+     *
+     * NOTE — deferred refactor: the query-accumulation methods in Model
+     * (_where, _join, _orderBy, ...) duplicate what QueryBuilder already
+     * offers. The intent is to eventually replace the internal accumulators
+     * with a QueryBuilder held on the Model instance, so `buildQuery()`
+     * becomes trivial. For now, exposing this method as public unblocks
+     * the callers who want raw builder access.
+     */
+    public function toQueryBuilder(): QueryBuilder
+    {
+        return $this->buildQuery();
+    }
+
     protected function buildQuery(): QueryBuilder
     {
         $builder = (new QueryBuilder())->on($this->connection)->from($this->table)->select($this->querySelect);
@@ -868,9 +920,30 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
 
     public static function table(string $table): QueryBuilder { return (new QueryBuilder())->from($table); }
 
+    /**
+     * Strict identifier check for any column that flows into a WHERE/ORDER BY/
+     * GROUP BY clause. Accepts:
+     *   - "col"
+     *   - "table.col"
+     *   - "*"  (only standalone; never "table.*" here — use select() for that)
+     *
+     * Anything else (parens, operators, commas, quotes, spaces) is rejected.
+     * For expressions like COUNT(*), AVG(x), CASE WHEN ... use selectRaw() or
+     * orderByRaw() instead, which carry the "this is on the developer" contract.
+     */
     protected static function sanitizeColumn(string $column): string
     {
-        if (!preg_match('/^[a-zA-Z0-9_\.\* \(\),!\'<>=]+$/i', $column)) throw new \InvalidArgumentException("Invalid column: {$column}");
+        $column = trim($column);
+
+        if ($column === '*') {
+            return '*';
+        }
+
+        if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/', $column)) {
+            throw new \InvalidArgumentException(
+                "Invalid column identifier: '{$column}'. Use selectRaw()/orderByRaw() for expressions."
+            );
+        }
         return $column;
     }
 
@@ -891,6 +964,20 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         return $this->toArray();
     }
 
+    /**
+     * Property-access resolution:
+     *
+     *   $model->attribute    → $this->attributes[...]
+     *   $model->relation     → already-loaded relation OR fetch it now
+     *
+     * Relation-shape rules (unified so callers get consistent types):
+     *
+     *   hasOne / belongsTo   → returns a single Model or null
+     *   hasMany              → returns an array (may be empty)
+     *
+     * We cache the fetched relation on `$this->relations` so subsequent
+     * accesses in the same request don't re-query.
+     */
     public function __get(string $k)
     {
         if (array_key_exists($k, $this->attributes)) {
@@ -901,26 +988,32 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
             return $this->relations[$k];
         }
 
-        // Handle dynamic relationship loading
-        if (method_exists($this, $k)) {
-            $relation = $this->$k();
-            if ($relation instanceof self) {
-                // If it's a relationship query builder, fetch results
-                // We don't know for sure if it's hasOne or hasMany here 
-                // without more metadata, but usually if we access as property
-                // and it was intended to be a relation, we can try to guess or just get all.
-                // However, batchLoadRelation handles hasMany vs hasOne.
-                
-                // For now, let's just execute the query. 
-                // If it's used in a foreach, it needs to be an array.
-                $results = $relation->get();
-                $this->relations[$k] = $results;
-                return $results;
-            }
+        if (!method_exists($this, $k)) {
+            return null;
+        }
+
+        $relation = $this->$k();
+
+        // hasOne / belongsTo executed at method-call time and returned a
+        // Model (or null). Cache and return as-is.
+        if ($relation === null || !($relation instanceof self)) {
+            $this->relations[$k] = $relation;
             return $relation;
         }
 
-        return null;
+        // hasMany returned a chaining builder. Execute now and cache the
+        // array so the property behaves like a collection (matches the
+        // caller's intuition that `->posts` iterates).
+        if ($relation->isChaining) {
+            $results = $relation->get();
+            $this->relations[$k] = $results;
+            return $results;
+        }
+
+        // A raw model instance (e.g. eager-loaded belongsTo result). Cache
+        // and return the single model.
+        $this->relations[$k] = $relation;
+        return $relation;
     }
 
     public function __isset(string $k): bool

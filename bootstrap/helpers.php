@@ -207,11 +207,43 @@ if (!function_exists('config')) {
      * @param mixed $default Default value if not found
      * @return mixed
      */
+    /**
+     * Read/write configuration.
+     *
+     *   config('app.name')                 → read a value.
+     *   config(['app.debug' => true])      → write one or more values.
+     *   config()                           → the whole tree.
+     *   config('__reload__')               → re-read all config/*.php from disk.
+     *                                        Useful in tests when a file changed.
+     *   config('__reload__', 'app')        → re-read one specific file.
+     */
     function config($key = null, $default = null)
     {
         static $config = [];
-        
-        // Load all config files on first call
+
+        // Reload sentinel — bypasses the lazy-load cache entirely.
+        if ($key === '__reload__') {
+            $configPath = dirname(__DIR__) . '/config';
+            if ($default !== null) {
+                // Reload just one file.
+                $file = $configPath . '/' . $default . '.php';
+                if (file_exists($file)) {
+                    $config[$default] = require $file;
+                }
+            } else {
+                // Reload everything.
+                $config = [];
+                if (is_dir($configPath)) {
+                    foreach (glob($configPath . '/*.php') as $file) {
+                        $name = basename($file, '.php');
+                        $config[$name] = require $file;
+                    }
+                }
+            }
+            return true;
+        }
+
+        // Lazy load on first read.
         if (empty($config)) {
             $configPath = dirname(__DIR__) . '/config';
             if (is_dir($configPath)) {
@@ -240,18 +272,17 @@ if (!function_exists('config')) {
             }
             return true;
         }
-        
-        // Parse dot notation
+
         $keys = explode('.', $key);
         $value = $config;
-        
+
         foreach ($keys as $segment) {
             if (!isset($value[$segment])) {
                 return $default;
             }
             $value = $value[$segment];
         }
-        
+
         return $value;
     }
 }
@@ -270,46 +301,46 @@ if (!function_exists('env')) {
         static $loaded = false;
 
         $normalize = static function ($value) {
-            if (!is_string($value)) {
-                return $value;
-            }
-
+            if (!is_string($value)) return $value;
             $lower = strtolower($value);
-
-            if (in_array($lower, ['true', '(true)'], true)) {
-                return true;
-            }
-
-            if (in_array($lower, ['false', '(false)'], true)) {
-                return false;
-            }
-
-            if (in_array($lower, ['null', '(null)'], true)) {
-                return null;
-            }
-
-            if (in_array($lower, ['empty', '(empty)'], true)) {
-                return '';
-            }
-
+            if (in_array($lower, ['true', '(true)'],  true)) return true;
+            if (in_array($lower, ['false','(false)'], true)) return false;
+            if (in_array($lower, ['null', '(null)'],  true)) return null;
+            if (in_array($lower, ['empty','(empty)'], true)) return '';
             return $value;
         };
-        
+
         if (!$loaded) {
+            // Shell-should-win: PHP's default variables_order = "GPCS" leaves
+            // $_ENV empty at boot even when the shell exported vars. But
+            // getenv() DOES see them. Snapshot into $_ENV so the guard below
+            // sees the shell's values and refuses to overwrite them from .env.
+            //
+            // This closes the "shell APP_DEBUG=false gets silently overwritten
+            // by APP_DEBUG=true in .env" bug discovered while testing dd().
+            foreach ($_SERVER as $k => $v) {
+                if (is_string($k) && preg_match('/^[A-Z_][A-Z0-9_]*$/', $k)
+                    && !array_key_exists($k, $_ENV)) {
+                    $_ENV[$k] = $v;
+                }
+            }
+
             $envFile = dirname(__DIR__) . '/.env';
             if (file_exists($envFile)) {
                 $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
                 foreach ($lines as $line) {
                     if (strpos(trim($line), '#') === 0 || !str_contains($line, '=')) {
-                        continue; 
+                        continue;
                     }
-                    
                     list($name, $value) = explode('=', $line, 2);
-                    $name = trim($name);
+                    $name  = trim($name);
                     $value = trim(trim($value), '"\'');
                     $value = $normalize($value);
-                    
-                    if (!array_key_exists($name, $_ENV)) {
+
+                    // Shell-provided value wins over .env value. Check both
+                    // $_ENV (fresh from $_SERVER above) and getenv() so we
+                    // catch shell exports on any PHP variables_order.
+                    if (!array_key_exists($name, $_ENV) && getenv($name) === false) {
                         $_ENV[$name] = $value;
                         putenv("{$name}=" . (is_bool($value) ? ($value ? 'true' : 'false') : (string)$value));
                     }
@@ -318,12 +349,10 @@ if (!function_exists('env')) {
                 // Resolve nested variables like ${APP_NAME}
                 foreach ($_ENV as $name => $value) {
                     if (is_string($value) && str_contains($value, '${')) {
-                        $resolvedValue = preg_replace_callback('/\${([^}]+)}/', function($matches) {
-                            return $_ENV[$matches[1]] ?? $matches[0];
+                        $resolvedValue = preg_replace_callback('/\${([^}]+)}/', function ($m) {
+                            return $_ENV[$m[1]] ?? $m[0];
                         }, $value);
-
                         $resolvedValue = $normalize($resolvedValue);
-                        
                         $_ENV[$name] = $resolvedValue;
                         putenv("{$name}=" . (is_bool($resolvedValue) ? ($resolvedValue ? 'true' : 'false') : (string)$resolvedValue));
                     }
@@ -331,19 +360,22 @@ if (!function_exists('env')) {
             }
             $loaded = true;
         }
-        
-        // If no key is provided, just return null (the environment is now loaded)
+
         if ($key === null) {
             return null;
         }
 
-        // Try getenv first, then $_ENV, then default
+        // getenv() first (in case shell set something after our snapshot),
+        // then $_ENV, then default. The normalizer runs on strings so
+        // 'true'/'false'/'null' from either source get typed correctly.
         $value = getenv($key);
         if ($value !== false) {
-            return $value;
+            return $normalize($value);
         }
-
-        return $_ENV[$key] ?? $default;
+        if (array_key_exists($key, $_ENV)) {
+            return $_ENV[$key];
+        }
+        return $default;
     }
 }
 
@@ -362,21 +394,44 @@ if (!function_exists('e')) {
 
 if (!function_exists('dd')) {
     /**
-     * Professional, Masked, and Collapsible Dump and Die
+     * Dump and die.
+     *
+     * Debug mode (APP_DEBUG=true OR CLI): full collapsible dump with sensitive
+     * keys masked.
+     *
+     * Production (APP_DEBUG=false in a web context): a stray dd() in production
+     * code must NEVER leak data. The function logs to error_log so the
+     * developer can find the offender, sends a generic 500 response, and
+     * exits. The dumped values are not rendered to the response.
      */
     function dd(...$vars): void
     {
+        $isCli = (php_sapi_name() === 'cli' || defined('STDIN'));
+        $isDebug = $isCli || filter_var(env('APP_DEBUG', false), FILTER_VALIDATE_BOOLEAN);
+
+        if (!$isDebug) {
+            // Production safety: log + generic 500 + die.
+            $caller = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 1)[0] ?? [];
+            $where = ($caller['file'] ?? 'unknown') . ':' . ($caller['line'] ?? '?');
+            error_log("dd() called in production at {$where} — refusing to dump.");
+
+            if (!headers_sent()) {
+                http_response_code(500);
+                header('Content-Type: text/html; charset=UTF-8');
+            }
+            echo '<!DOCTYPE html><title>500</title><h1>500 Server Error</h1>';
+            die(1);
+        }
+
         if (!headers_sent()) {
             http_response_code(500);
         }
 
-        // List of keys to mask
         $sensitiveKeys = [
-            'password', 'pwd', 'secret', 'key', 'token', 
+            'password', 'pwd', 'secret', 'key', 'token',
             'auth', 'database', 'db_pass', 'smtp_pass', 'dsn'
         ];
 
-        // Recursive masking function
         $masker = function (&$item, $key) use ($sensitiveKeys) {
             foreach ($sensitiveKeys as $sensitive) {
                 if (is_string($key) && str_contains(strtolower($key), $sensitive)) {
@@ -384,6 +439,16 @@ if (!function_exists('dd')) {
                 }
             }
         };
+
+        if ($isCli && !defined('STDIN')) {
+            // True CLI: dump to STDOUT in plain text.
+            foreach ($vars as $var) {
+                if (is_array($var)) { array_walk_recursive($var, $masker); }
+                print_r($var);
+                echo "\n";
+            }
+            die(1);
+        }
 
         echo '<div style="background-color: #18171B; color: #FF8400; padding: 20px; font-family: Consolas, monospace; line-height: 1.5; font-size: 14px; border-radius: 8px; margin: 20px; overflow: auto; border: 1px solid #444; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">';
         echo '<h3 style="color: #FFF; border-bottom: 1px solid #444; padding-bottom: 10px; margin-top: 0; display: flex; justify-content: space-between;">';
@@ -394,22 +459,16 @@ if (!function_exists('dd')) {
         foreach ($vars as $var) {
             $type = gettype($var);
             $displayName = $type;
-
-            // Prepare data for display
             $displayVar = $var;
-            
-            // If it's an object, convert to array for masking, or just mask the array
+
             if (is_object($displayVar)) {
                 $displayName = 'Object (' . get_class($displayVar) . ')';
-                // Reflection could be used here, but for now, we'll cast to array for the masker
-                $displayVar = (array) $displayVar; 
+                $displayVar = (array) $displayVar;
             }
 
             if (is_array($displayVar)) {
                 array_walk_recursive($displayVar, $masker);
             } elseif (is_string($displayVar)) {
-                // Check if the variable itself is a sensitive key name (if passed alone)
-                // This is less common but good for safety
                 $displayVar = e($displayVar);
             }
 
@@ -417,7 +476,6 @@ if (!function_exists('dd')) {
             echo '<summary style="cursor: pointer; font-weight: bold; color: #56DB3A; outline: none; user-select: none;">';
             echo $displayName;
             echo '</summary>';
-            
             echo '<pre style="margin: 10px 0 0 0; color: #BDC3C7; white-space: pre-wrap; word-break: break-all;">';
             echo htmlspecialchars(print_r($displayVar, true));
             echo '</pre>';
@@ -427,8 +485,8 @@ if (!function_exists('dd')) {
         echo '<script>
             document.querySelectorAll("summary").forEach(s => {
                 s.addEventListener("click", () => {
-                    s.textContent = s.textContent.startsWith("▶") 
-                        ? s.textContent.replace("▶", "▼") 
+                    s.textContent = s.textContent.startsWith("▶")
+                        ? s.textContent.replace("▶", "▼")
                         : s.textContent.replace("▼", "▶");
                 });
             });
@@ -507,17 +565,21 @@ if (!function_exists('redirect')) {
 
 if (!function_exists('csrf_token')) {
     /**
-     * Generate or get CSRF token
-     * 
-     * @return string
+     * Generate or get the CSRF token via the Session driver.
+     *
+     * Routes through the Session service (rather than $_SESSION directly) so
+     * flash + regeneration work through the same abstraction, and so
+     * alternative session backends (Redis, database) stay consistent.
      */
     function csrf_token(): string
     {
-        if (!isset($_SESSION['_csrf_token'])) {
-            $_SESSION['_csrf_token'] = bin2hex(random_bytes(32));
+        $session = session();
+        $token = $session->get('_csrf_token');
+        if (!is_string($token) || $token === '') {
+            $token = bin2hex(random_bytes(32));
+            $session->set('_csrf_token', $token);
         }
-        
-        return $_SESSION['_csrf_token'];
+        return $token;
     }
 }
 

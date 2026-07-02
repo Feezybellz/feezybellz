@@ -345,8 +345,11 @@ return iterator_to_array($cursor);
                 $w['query']($nestedBuilder);
                 $clause = $this->parseWhereToFilter($nestedBuilder->where);
             } elseif (isset($w['type']) && $w['type'] === 'raw') {
-                error_log("MongoDB Driver: whereRaw is not fully supported and was ignored: " . $w['sql']);
-                continue;
+                // Silently dropping a where clause would turn delete()/update()
+                // into "operate on the whole collection" — refuse explicitly.
+                throw new \BadMethodCallException(
+                    "MongoDBDriver: whereRaw() is not supported. SQL fragment was: " . $w['sql']
+                );
             } else {
                 $op = strtoupper($w['operator'] ?? '=');
                 $col = $w['column'];
@@ -442,15 +445,33 @@ return iterator_to_array($cursor);
 
     public function query(string $query, array $params = [])
     {
-        // For MongoDB, raw queries via interface are generally not used or fallback to command
-        throw new \Exception("Raw string queries are not supported in MongoDBDriver. Use QueryBuilder.");
+        throw new \BadMethodCallException(
+            "MongoDBDriver: raw string queries are not supported. Use the QueryBuilder API."
+        );
+    }
+
+    /**
+     * Disconnect from MongoDB and reset all per-connection state.
+     * Called by DB::purge() when a tenant's connection is hot-swapped.
+     */
+    public function disconnect(): void
+    {
+        $this->manager = null;
+        $this->session = null;
+        $this->databaseName = null;
+        $this->lastInsertedId = null;
     }
 
     public function insert(string $table, array $data)
     {
         $namespace = $this->databaseName . '.' . $table;
         $bulk = new BulkWrite();
-        
+
+        // ObjectId is (4-byte timestamp | 5-byte per-process random | 3-byte
+        // counter). Two forked children sharing an RNG seed *could* generate
+        // the same random segment. QueueServer::executeJob() re-seeds via
+        // mt_srand() in each child, and ObjectId itself uses OpenSSL random
+        // where available. If you fork() outside the queue harness, re-seed.
         $id = new ObjectId();
         if (!isset($data['_id'])) {
             $data['_id'] = $id;

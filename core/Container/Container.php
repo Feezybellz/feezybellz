@@ -23,6 +23,13 @@ class Container
     protected $instances = [];
 
     /**
+     * Class names currently being resolved. Detects circular deps and
+     * throws a specific error instead of letting PHP blow the stack.
+     * @var array<string, true>
+     */
+    protected $buildStack = [];
+
+    /**
      * Get the globally available instance of the container.
      */
     public static function getInstance(): self
@@ -107,6 +114,15 @@ class Container
      */
     protected function build(string $concrete, array $parameters = [])
     {
+        // Circular-dependency detection: fail fast with a specific error
+        // instead of letting the recursion blow the PHP stack (which is
+        // both slow and uninformative).
+        if (isset($this->buildStack[$concrete])) {
+            $chain = implode(' → ', array_keys($this->buildStack)) . " → {$concrete}";
+            throw new Exception("Circular dependency detected while resolving [{$concrete}]: {$chain}");
+        }
+        $this->buildStack[$concrete] = true;
+
         if (!isset($this->reflectionCache[$concrete])) {
             try {
                 $reflector = new ReflectionClass($concrete);
@@ -124,17 +140,18 @@ class Container
 
         $cached = $this->reflectionCache[$concrete];
 
-        if (!$cached['reflector']->isInstantiable()) {
-            throw new Exception("Target [$concrete] is not instantiable.");
+        try {
+            if (!$cached['reflector']->isInstantiable()) {
+                throw new Exception("Target [$concrete] is not instantiable.");
+            }
+            if (is_null($cached['constructor'])) {
+                return new $concrete;
+            }
+            $instances = $this->resolveDependencies($cached['params'], $parameters);
+            return $cached['reflector']->newInstanceArgs($instances);
+        } finally {
+            unset($this->buildStack[$concrete]);
         }
-
-        if (is_null($cached['constructor'])) {
-            return new $concrete;
-        }
-
-        $instances = $this->resolveDependencies($cached['params'], $parameters);
-
-        return $cached['reflector']->newInstanceArgs($instances);
     }
 
     /**

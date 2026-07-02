@@ -108,6 +108,7 @@
 
                         <div class="tabs">
                             <div class="tab active" data-tab="body-tab">Body</div>
+                            <div class="tab" data-tab="auth-tab">Auth</div>
                             <div class="tab" data-tab="files-tab">Files</div>
                             <div class="tab" data-tab="headers-tab">Headers</div>
                         </div>
@@ -128,6 +129,35 @@
                                 <label id="body-label">Request Body</label>
                                 <textarea id="body" rows="6" placeholder='{ "key": "value" }'></textarea>
                                 <div id="binary-hint" class="hint hidden">The file selected in the 'Files' tab will be sent as the raw request body.</div>
+                            </div>
+                        </div>
+
+                        <div id="auth-tab" class="tab-content hidden">
+                            <div class="form-group">
+                                <label>Auth Type</label>
+                                <select id="auth-type" class="form-control">
+                                    <option value="none">No Auth</option>
+                                    <option value="bearer">Bearer Token</option>
+                                    <option value="basic">Basic Auth</option>
+                                </select>
+                            </div>
+                            <div id="auth-bearer-group" class="hidden">
+                                <div class="form-group">
+                                    <label>Token</label>
+                                    <input type="text" id="auth-bearer" placeholder="Enter token here">
+                                </div>
+                            </div>
+                            <div id="auth-basic-group" class="hidden">
+                                <div class="grid" style="gap: 10px;">
+                                    <div class="form-group">
+                                        <label>Username</label>
+                                        <input type="text" id="auth-basic-user" placeholder="Username">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Password</label>
+                                        <input type="password" id="auth-basic-pass" placeholder="Password">
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -296,6 +326,21 @@
         fileInput.addEventListener('change', handleFileSelect);
         convertBlob.addEventListener('change', handleFileSelect);
 
+        const authType = document.getElementById('auth-type');
+        const authBearerGroup = document.getElementById('auth-bearer-group');
+        const authBasicGroup = document.getElementById('auth-basic-group');
+
+        authType.addEventListener('change', () => {
+            authBearerGroup.classList.add('hidden');
+            authBasicGroup.classList.add('hidden');
+            
+            if (authType.value === 'bearer') {
+                authBearerGroup.classList.remove('hidden');
+            } else if (authType.value === 'basic') {
+                authBasicGroup.classList.remove('hidden');
+            }
+        });
+
         function handleFileSelect() {
             const file = fileInput.files[0];
             if (!file) {
@@ -355,6 +400,21 @@
                 formData.append('proxy_body_type', selectedBodyType);
                 formData.append('proxy_body', bodyContent);
                 formData.append('proxy_file_field', fileFieldName);
+
+                // Add Auth token to headers
+                const authTypeValue = document.getElementById('auth-type').value;
+                if (authTypeValue === 'bearer') {
+                    const bearerToken = document.getElementById('auth-bearer').value.trim();
+                    if (bearerToken) {
+                        formData.append('proxy_headers[Authorization]', 'Bearer ' + bearerToken);
+                    }
+                } else if (authTypeValue === 'basic') {
+                    const user = document.getElementById('auth-basic-user').value;
+                    const pass = document.getElementById('auth-basic-pass').value;
+                    if (user || pass) {
+                        formData.append('proxy_headers[Authorization]', 'Basic ' + btoa(user + ':' + pass));
+                    }
+                }
 
                 // Add headers to form data
                 document.querySelectorAll('.header-row').forEach((row, index) => {

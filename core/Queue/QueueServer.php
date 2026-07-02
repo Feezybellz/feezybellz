@@ -175,6 +175,41 @@ class QueueServer
         $this->maxClients = max(1, $max);
     }
 
+    // ─── Security (v2 wire protocol) ────────────────────────────────────
+
+    /** @var string Shared secret for HMAC-SHA256 signing. Empty = signing disabled (dev only). */
+    private $secret = '';
+
+    /** @var bool When true, every incoming frame must carry a valid signature. */
+    private $requireSignature = true;
+
+    /**
+     * Peer addresses (exact or CIDR) permitted to connect. Everything else is
+     * closed at accept() without a byte being read.
+     * @var string[]
+     */
+    private $allowedPeers = ['127.0.0.1', '::1'];
+
+    /**
+     * Callable patterns the server will invoke. See config/queue_server.php for
+     * the pattern language. Empty means NO callable is dispatchable.
+     * @var string[]
+     */
+    private $allowedCallables = [];
+
+    /** @var bool If true, the `stats` command bypasses the signature check. */
+    private $allowUnsignedStats = false;
+
+    /** @var string Optional dashboard token; browsers must supply ?token=<value>. */
+    private $uiToken = '';
+
+    public function setSecret(string $secret): void { $this->secret = $secret; }
+    public function setRequireSignature(bool $on): void { $this->requireSignature = $on; }
+    public function setAllowedPeers(array $peers): void { $this->allowedPeers = $peers; }
+    public function setAllowedCallables(array $patterns): void { $this->allowedCallables = $patterns; }
+    public function setAllowUnsignedStats(bool $on): void { $this->allowUnsignedStats = $on; }
+    public function setUiToken(string $token): void { $this->uiToken = $token; }
+
     /** @var int Total jobs received since startup. */
     private $totalJobsReceived = 0;
 
@@ -288,6 +323,22 @@ class QueueServer
      */
     public function start(): void
     {
+        // ── Step -1: Load security config if available ──────────────────
+        // Callers can also set these explicitly via setSecret() etc. before
+        // calling start(); config() acts as the default source.
+        $this->loadSecurityConfig();
+
+        // Refuse to boot if signature enforcement is on but no key exists.
+        // This is deliberately fatal: silently disabling auth is the worst
+        // outcome, so we crash loudly instead.
+        if ($this->requireSignature && $this->secret === '') {
+            throw new \RuntimeException(
+                "QueueServer: require_signature=true but no secret is configured. "
+                . "Set config('queue_server.secret') / env('QUEUE_SERVER_SECRET') / env('APP_KEY'), "
+                . "or set require_signature=false only if you fully understand the risk."
+            );
+        }
+
         // ── Step 0: Modern Asynchronous Signal Handling ─────────────────
         // In PHP 7.1+, this tells the engine to handle signals in the
         // background automatically, completely removing the need to call
@@ -368,6 +419,13 @@ class QueueServer
         $this->log("Config: maxChildren={$this->maxChildren}, "
             . "batchSize={$this->batchSize}, "
             . "maxJobsBeforeRestart={$this->maxJobsBeforeRestart}");
+        $this->log("Security: require_signature=" . ($this->requireSignature ? 'true' : 'FALSE')
+            . ", allowed_peers=[" . implode(',', $this->allowedPeers) . "]"
+            . ", allowed_callables=" . count($this->allowedCallables) . " pattern(s)"
+            . ", ui_token=" . ($this->uiToken !== '' ? 'set' : 'unset'));
+        if (empty($this->allowedCallables)) {
+            $this->log("WARN: allowed_callables is empty — the server will reject every dispatch.");
+        }
         $this->log("Waiting for jobs... (press Ctrl+C to stop)");
 
         // ── Step 6: Enter the main event loop ───────────────────────────
@@ -669,16 +727,99 @@ class QueueServer
             return;
         }
 
+        // Peer allowlist gate — cheapest possible reject. We do this BEFORE
+        // going non-blocking or allocating buffers so a scanner can't chew
+        // through server resources by opening a thousand rejected sockets.
+        $peerIp = $this->peerIpFromName($peerName);
+        if (!$this->peerAllowed($peerIp)) {
+            @fclose($clientSocket);
+            $this->log("Rejected connection from {$peerName}: peer not in allowed_peers");
+            return;
+        }
+
         // Non-blocking so fread() returns immediately when no data is
         // available. stream_select() tells us WHEN data arrives.
         stream_set_blocking($clientSocket, false);
 
-        // Track the client using its resource ID as a unique integer key
         $resourceId = (int) $clientSocket;
         $this->clientSockets[$resourceId] = $clientSocket;
         $this->clientBuffers[$resourceId] = '';
 
         $this->log("Client connected: {$peerName} (resource #{$resourceId})");
+    }
+
+    // ─── Peer allowlist ─────────────────────────────────────────────────
+
+    /**
+     * Extract the IP from a peer-name string ("127.0.0.1:54321" or
+     * "[::1]:54321"). Returns '' if we can't parse it.
+     */
+    private function peerIpFromName(?string $peerName): string
+    {
+        if (!$peerName) return '';
+        // IPv6: "[::1]:port"
+        if ($peerName[0] === '[') {
+            $end = strpos($peerName, ']');
+            return $end !== false ? substr($peerName, 1, $end - 1) : '';
+        }
+        // IPv4: "127.0.0.1:port"
+        $colon = strrpos($peerName, ':');
+        return $colon === false ? $peerName : substr($peerName, 0, $colon);
+    }
+
+    /**
+     * Check an IP against the allowed_peers list. Supports exact match and
+     * IPv4 CIDR (e.g. '10.0.0.0/8'). Empty list denies everything.
+     */
+    private function peerAllowed(string $ip): bool
+    {
+        if ($ip === '') return false;
+        if (empty($this->allowedPeers)) return false;
+
+        foreach ($this->allowedPeers as $rule) {
+            if (strpos($rule, '/') !== false) {
+                if ($this->cidrMatch($ip, $rule)) return true;
+            } elseif ($ip === $rule) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function cidrMatch(string $ip, string $cidr): bool
+    {
+        [$subnet, $mask] = explode('/', $cidr, 2);
+        $mask = (int) $mask;
+        $ipLong = ip2long($ip);
+        $subnetLong = ip2long($subnet);
+        if ($ipLong === false || $subnetLong === false || $mask < 0 || $mask > 32) {
+            return false;
+        }
+        if ($mask === 0) return true;
+        $maskLong = -1 << (32 - $mask);
+        return ($ipLong & $maskLong) === ($subnetLong & $maskLong);
+    }
+
+    // ─── Security config loader ─────────────────────────────────────────
+
+    private function loadSecurityConfig(): void
+    {
+        if (!function_exists('config')) return;
+
+        $cfg = config('queue_server');
+        if (!is_array($cfg)) return;
+
+        if (isset($cfg['secret']))              $this->secret = (string) $cfg['secret'];
+        if (isset($cfg['require_signature']))   $this->requireSignature = (bool) $cfg['require_signature'];
+        if (isset($cfg['allowed_peers']))       $this->allowedPeers = (array) $cfg['allowed_peers'];
+        if (isset($cfg['allowed_callables']))   $this->allowedCallables = (array) $cfg['allowed_callables'];
+        if (isset($cfg['allow_unsigned_stats'])) $this->allowUnsignedStats = (bool) $cfg['allow_unsigned_stats'];
+        if (isset($cfg['ui']['token']))         $this->uiToken = (string) $cfg['ui']['token'];
+
+        // Base64-prefixed APP_KEY is a common shape; unwrap so hash_hmac gets raw bytes.
+        if (strpos($this->secret, 'base64:') === 0) {
+            $this->secret = base64_decode(substr($this->secret, 7));
+        }
     }
 
     /**
@@ -737,52 +878,107 @@ class QueueServer
      * @param int $resourceId  The integer resource ID of the client socket
      * @return void
      */
+    /**
+     * Wire protocol v2:
+     *   [4 bytes total-length][32 bytes HMAC-SHA256][N bytes JSON]
+     * total-length = 32 + N (the total number of bytes AFTER the header).
+     *
+     * The HMAC is computed over the raw JSON bytes with the shared secret.
+     * Failed verification → 401-style error + hard disconnect. No exceptions
+     * so a scanner can't fingerprint which failure they hit.
+     */
     private function processClientBuffer(int $resourceId): void
     {
-        // Loop because TCP coalescing might deliver multiple messages
         while (true) {
-            // ── THE FIX ─────────────────────────────────────────────────────
-            // If handleJobPayload() successfully processed a message and 
-            // aggressively disconnected the client, the buffer is gone.
-            // We must break immediately to prevent undefined key warnings.
             if (!isset($this->clientBuffers[$resourceId])) {
                 break;
             }
 
             $buffer = $this->clientBuffers[$resourceId];
 
-            // Need at least 4 bytes for the length header
             if (strlen($buffer) < 4) {
                 break;
             }
 
-            // unpack('N', ...) decodes 4 bytes as big-endian unsigned
-            // 32-bit integer (network byte order)
             $header = unpack('N', substr($buffer, 0, 4));
-            $payloadLength = $header[1];
+            $totalLen = $header[1];
 
-            // Reject payloads over 1MB to prevent memory exhaustion
             $maxPayloadSize = 1024 * 1024;
-            if ($payloadLength > $maxPayloadSize) {
-                $this->log("Rejecting oversized payload ({$payloadLength} bytes) from resource #{$resourceId}");
-                $this->sendResponse($resourceId, false, "Payload too large (max {$maxPayloadSize} bytes)");
+            if ($totalLen > $maxPayloadSize + 32) {
+                $this->log("Rejecting oversized payload ({$totalLen} bytes) from resource #{$resourceId}");
+                $this->sendResponse($resourceId, false, "Payload too large");
                 $this->disconnectClient($resourceId);
                 return;
             }
 
-            // Wait for more data if the full payload hasn't arrived
-            $totalMessageLength = 4 + $payloadLength;
-            if (strlen($buffer) < $totalMessageLength) {
-                break;
+            if (strlen($buffer) < 4 + $totalLen) {
+                break; // wait for more bytes
             }
 
-            // Extract the JSON payload and advance the buffer
-            $jsonPayload = substr($buffer, 4, $payloadLength);
-            $this->clientBuffers[$resourceId] = substr($buffer, $totalMessageLength);
+            $sig = substr($buffer, 4, 32);
+            $jsonPayload = substr($buffer, 4 + 32, $totalLen - 32);
+            $this->clientBuffers[$resourceId] = substr($buffer, 4 + $totalLen);
 
-            // Parse, validate, and enqueue the job
+            if (!$this->authenticateFrame($jsonPayload, $sig, $resourceId)) {
+                // authenticateFrame() has already sent + disconnected on failure.
+                return;
+            }
+
             $this->handleJobPayload($resourceId, $jsonPayload);
         }
+    }
+
+    /**
+     * Verify the HMAC signature on an incoming frame.
+     *
+     * Returns true if the signature is good OR the frame is a `stats` command
+     * and allow_unsigned_stats is on. Otherwise disconnects and returns false.
+     */
+    private function authenticateFrame(string $jsonPayload, string $sig, int $resourceId): bool
+    {
+        if (!$this->requireSignature) {
+            return true;
+        }
+
+        // Allow stats to be unsigned if operator opted in — the only "safe"
+        // exemption because stats is read-only and small.
+        if ($this->allowUnsignedStats && $this->isStatsPayload($jsonPayload)) {
+            return true;
+        }
+
+        if ($this->secret === '') {
+            // Fail closed: no secret → nothing verifies.
+            $this->log("Rejected frame from resource #{$resourceId}: no server-side secret configured");
+            $this->sendResponse($resourceId, false, 'Server missing secret; cannot authenticate.');
+            $this->disconnectClient($resourceId);
+            return false;
+        }
+
+        if (strlen($sig) !== 32) {
+            $this->log("Rejected frame from resource #{$resourceId}: signature wrong length");
+            $this->sendResponse($resourceId, false, 'Signature length invalid.');
+            $this->disconnectClient($resourceId);
+            return false;
+        }
+
+        $expected = hash_hmac('sha256', $jsonPayload, $this->secret, true);
+        if (!hash_equals($expected, $sig)) {
+            $this->log("Rejected frame from resource #{$resourceId}: signature mismatch");
+            $this->sendResponse($resourceId, false, 'Signature verification failed.');
+            $this->disconnectClient($resourceId);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Cheap peek to see if a frame is the stats command. Uses substring
+     * checks rather than json_decode to keep the exemption path fast.
+     */
+    private function isStatsPayload(string $json): bool
+    {
+        return strpos($json, '"command"') !== false
+            && strpos($json, '"stats"') !== false;
     }
 
     /**
@@ -863,6 +1059,18 @@ class QueueServer
 
     $callableName = is_array($callable) ? implode('::', $callable) : (string) $callable;
 
+    // Allowlist check — the last gate before we enqueue anything.
+    // Defense in depth: even if signature verification is somehow bypassed,
+    // the callable still has to match a pattern the operator explicitly
+    // opted into. Default config has an empty list, so the framework fails
+    // closed until a developer opts callables in.
+    if (!$this->callableAllowed($callableName)) {
+        $this->log("Rejected non-allowlisted callable [{$callableName}] from resource #{$resourceId}");
+        $this->sendResponse($resourceId, false, "Callable '{$callableName}' is not in allowed_callables.");
+        $this->disconnectClient($resourceId);
+        return;
+    }
+
     // ── Step 4: Generate a unique job ID ────────────────────────────────
     $this->totalJobsReceived++;
     $jobId = sprintf('job_%d_%x', $this->totalJobsReceived, mt_rand());
@@ -884,23 +1092,60 @@ class QueueServer
     $this->disconnectClient($resourceId);
 }
 
+    /**
+     * Cheap shape check — enforces "must be a name-shaped string or a
+     * [class, method] pair with name-shaped members". This is a syntactic
+     * gate, not an authorization gate: the allowlist below is the real
+     * authorization boundary. See callableAllowed().
+     */
     private function isValidCallablePayload($callable): bool
     {
         if (is_string($callable)) {
-            if (!preg_match('/^[A-Za-z_\\\\][A-Za-z0-9_\\\\]*$/', $callable)) {
-                return false;
-            }
-
-            $blocked = ['system', 'exec', 'shell_exec', 'passthru', 'assert', 'eval', 'unserialize'];
-            return !in_array(strtolower($callable), $blocked, true);
+            return (bool) preg_match('/^[A-Za-z_\\\\][A-Za-z0-9_\\\\]*$/', $callable);
         }
 
-        if (is_array($callable) && count($callable) === 2 && is_string($callable[0]) && is_string($callable[1])) {
+        if (is_array($callable) && count($callable) === 2
+            && is_string($callable[0]) && is_string($callable[1])) {
             return preg_match('/^[A-Za-z_\\\\][A-Za-z0-9_\\\\]*$/', $callable[0])
                 && preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $callable[1]);
         }
 
         return false;
+    }
+
+    /**
+     * Test a callable name against the configured allowlist.
+     * Pattern language:
+     *   'App\Jobs\SendEmail::handle'   exact
+     *   'App\Jobs\*::handle'           `*` matches any run of non-\ characters
+     *   'App\Jobs\**::*'               `**` matches any run including `\`
+     *   'sendEmail'                    bare function name (no ::)
+     *
+     * Empty allowlist means nothing is allowed. This is deliberate — a
+     * misconfigured server should refuse to dispatch, not accept everything.
+     */
+    private function callableAllowed(string $name): bool
+    {
+        if (empty($this->allowedCallables)) {
+            return false;
+        }
+        foreach ($this->allowedCallables as $pattern) {
+            if ($pattern === $name) {
+                return true;
+            }
+            if (strpos($pattern, '*') !== false && $this->globMatch($pattern, $name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function globMatch(string $pattern, string $subject): bool
+    {
+        $regex = preg_quote($pattern, '#');
+        // ** before * so we don't clobber the `**` mapping when we do `*`.
+        $regex = str_replace(['\\*\\*', '\\*'], ['.*', '[^\\\\]*'], $regex);
+        return (bool) preg_match('#^' . $regex . '$#', $subject);
     }
 
 
@@ -1077,32 +1322,39 @@ class QueueServer
      * @param array  $data        Optional extra data (e.g., job_id)
      * @return void
      */
-    private function sendResponse($resourceId, $success, $message, array $data = []): void
+    /**
+     * Send a signed response back to a client. Wire protocol v2:
+     *   [4 bytes total-length][32 bytes HMAC-SHA256(secret, json)][JSON]
+     *
+     * When require_signature is off (dev only) we send zero-filled 32 bytes
+     * in place of the sig so the framing stays consistent — clients can
+     * still parse the same wire format, they just don't verify.
+     */
+    private function sendResponse($resourceId, $success, $messageText, array $data = []): void
     {
         if (!isset($this->clientSockets[$resourceId])) {
             return;
         }
 
-        // Build the response payload
-        $response = ['success' => $success, 'message' => $message];
+        $response = ['success' => $success, 'message' => $messageText];
         if (!empty($data)) {
             $response['data'] = $data;
         }
 
         $json = json_encode($response);
+        $sig = ($this->requireSignature && $this->secret !== '')
+            ? hash_hmac('sha256', $json, $this->secret, true)
+            : str_repeat("\0", 32);
 
-        // pack('N', ...) = 4-byte big-endian unsigned int (network byte order)
-        $header = pack('N', strlen($json));
-        $message = $header . $json;
+        $frame = pack('N', 32 + strlen($json)) . $sig . $json;
 
-        // Write with a loop to handle partial writes
         $totalWritten = 0;
-        $messageLength = strlen($message);
+        $messageLength = strlen($frame);
 
         while ($totalWritten < $messageLength) {
             $written = @fwrite(
                 $this->clientSockets[$resourceId],
-                substr($message, $totalWritten)
+                substr($frame, $totalWritten)
             );
 
             if ($written === false || $written === 0) {
@@ -1110,7 +1362,6 @@ class QueueServer
                 $this->disconnectClient($resourceId);
                 return;
             }
-
             $totalWritten += $written;
         }
     }
@@ -1226,17 +1477,32 @@ class QueueServer
      */
     private function handleHttpConnection(): void
     {
-        $client = @stream_socket_accept($this->httpSocket, 0);
+        $client = @stream_socket_accept($this->httpSocket, 0, $peerName);
         if ($client === false) return;
 
-        // Read the HTTP request (we only need the first chunk to get the route)
+        // Same peer allowlist applies to the HTTP UI. A dashboard behind a
+        // token is still a dashboard: don't let arbitrary networks pull it.
+        $peerIp = $this->peerIpFromName($peerName);
+        if (!$this->peerAllowed($peerIp)) {
+            @fclose($client);
+            $this->log("HTTP UI: rejected connection from {$peerName}");
+            return;
+        }
+
         $request = @fread($client, 2048);
         if (!$request) {
             fclose($client);
             return;
         }
 
-        // Extremely basic HTTP routing
+        // Extract the first request line and check the token query param
+        // BEFORE routing to any handler.
+        if (!$this->httpTokenValid($request)) {
+            $this->writeHttpResponse($client, 401, 'text/plain', 'Unauthorized');
+            fclose($client);
+            return;
+        }
+
         if (strpos($request, 'GET /api/stats') === 0) {
             $this->serveHttpStats($client);
         } else {
@@ -1244,6 +1510,38 @@ class QueueServer
         }
 
         fclose($client);
+    }
+
+    /**
+     * Timing-safe check that the request URL carries `?token=<uiToken>`.
+     * A missing configured ui_token means the UI is effectively OFF (we
+     * refuse every request).
+     */
+    private function httpTokenValid(string $request): bool
+    {
+        if ($this->uiToken === '') return false;
+
+        // Grab the first line (request-line) and parse the query.
+        $firstLine = strtok($request, "\r\n");
+        if ($firstLine === false) return false;
+        if (!preg_match('#^\S+\s+(\S+)#', $firstLine, $m)) return false;
+        $target = $m[1];
+        $q = parse_url($target, PHP_URL_QUERY);
+        if ($q === null) return false;
+        parse_str($q, $qs);
+        $supplied = (string) ($qs['token'] ?? '');
+        return $supplied !== '' && hash_equals($this->uiToken, $supplied);
+    }
+
+    private function writeHttpResponse($client, int $status, string $contentType, string $body): void
+    {
+        $statusText = [200 => 'OK', 401 => 'Unauthorized'][$status] ?? 'OK';
+        $response = "HTTP/1.1 {$status} {$statusText}\r\n"
+                  . "Content-Type: {$contentType}\r\n"
+                  . "Connection: close\r\n"
+                  . "Content-Length: " . strlen($body) . "\r\n\r\n"
+                  . $body;
+        @fwrite($client, $response);
     }
 
     private function serveHttpStats($client): void
@@ -1332,9 +1630,13 @@ class QueueServer
     </div>
 </div>
 <script>
+    // Preserve the ?token=... the user supplied when loading the page, and
+    // forward it on every /api/stats poll so the token gate stays satisfied.
+    const _uiToken = new URLSearchParams(window.location.search).get('token') || '';
     async function fetchStats() {
         try {
-            const res = await fetch('/api/stats');
+            const url = '/api/stats' + (_uiToken ? ('?token=' + encodeURIComponent(_uiToken)) : '');
+            const res = await fetch(url);
             const result = await res.json();
             if (result.success) {
                 document.getElementById('statusBadge').textContent = 'ONLINE';
