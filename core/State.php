@@ -89,6 +89,12 @@ class State
         if (class_exists(\Framework\Core\Logging\Log::class)) {
             \Framework\Core\Logging\Log::clearContext();
         }
+
+        // Auth: drop the resolved-guard cache so each request re-resolves.
+        // Config-level bindings survive; per-request state does not.
+        if (class_exists(\Framework\Core\Auth\Auth::class)) {
+            \Framework\Core\Auth\Auth::reset();
+        }
     }
 
     /**

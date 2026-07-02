@@ -37,6 +37,7 @@ class Kernel
      * source.
      */
     protected array $routeMiddleware = [
+        'auth'     => \Framework\Core\Http\Middleware\Authenticate::class,
         'csrf'     => \Framework\Core\Http\Middleware\CsrfMiddleware::class,
         'cors'     => \Framework\Core\Http\Middleware\CorsMiddleware::class,
         'security' => \Framework\Core\Http\Middleware\SecurityHeadersMiddleware::class,
@@ -66,6 +67,11 @@ class Kernel
             \Framework\Core\Logging\Log::setContext(['request_id' => $requestId]);
             $request->setParam('_request_id', $requestId);
             
+            // Bind the current request into the container so downstream
+            // services (Auth guards, FormRequests, custom middleware) all
+            // resolve the same instance.
+            $this->app->instance(Request::class, $request);
+
             $response = new Response();
             Router::init($request, $response);
             
@@ -157,6 +163,7 @@ class Kernel
     {
         $this->app->singleton(SessionDriverInterface::class, PHPSessionDriver::class);
         $this->app->singleton(Session::class);
+        $this->app->singleton(\Framework\Core\Auth\GuardManager::class);
     }
 
     /**

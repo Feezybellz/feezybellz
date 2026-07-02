@@ -132,7 +132,15 @@ class PHPSessionDriver implements SessionDriverInterface
 
     public function regenerate(): bool
     {
-        return session_regenerate_id(true);
+        // Regeneration cannot succeed once headers have been sent (the new
+        // session cookie can't reach the browser). Skip loudly-throwing in
+        // that case — Auth::login() calls this during flows that may have
+        // already flushed a header. Real-request flow calls it BEFORE any
+        // output; only tests/CLI can hit the fallback path.
+        if (headers_sent()) {
+            return false;
+        }
+        return @session_regenerate_id(true);
     }
 
     public function id(): string
