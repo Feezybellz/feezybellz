@@ -51,6 +51,9 @@ class WebSocketClient
     private $sslOptions = [];
     private $defaultHeaders = [];
 
+    /** Re-entrancy guard: true while listen() is draining the socket. */
+    private $pumping = false;
+
     /**
      * Create a client with explicit host/port.
      *
@@ -278,20 +281,13 @@ class WebSocketClient
             return;
         }
 
-        // Send a masked close frame (opcode 0x8)
-        $this->sendRawFrame('', 0x8);
-        usleep(100000);
-
-        $this->connected = false;
-        $this->rooms = [];
-        $this->clientId = '';
-
-        if (is_resource($this->socket)) {
-            fclose($this->socket);
+        // Best-effort masked close frame (opcode 0x8). If the peer is
+        // already gone, sendRawFrame() detects the dead socket and tears
+        // down for us — don't crash (this also runs from __destruct).
+        if ($this->sendRawFrame('', 0x8)) {
+            usleep(100000);
+            $this->teardown('client_close');
         }
-
-        $this->socket = null;
-        $this->dispatch('disconnected', []);
     }
 
     /**
@@ -425,6 +421,13 @@ class WebSocketClient
     {
         $this->requireConnection();
 
+        // Keepalive: drain any queued inbound frames first so server pings
+        // get ponged even by clients that only ever emit and never call
+        // listen()/loop(). Without this, an emit-only producer looks like a
+        // zombie to the server's heartbeat and gets disconnected while idle.
+        $this->listen(0);
+        $this->requireConnection(); // draining may have detected a close
+
         $payload = ['event' => $event, 'data' => $data];
 
         if ($ack !== null) {
@@ -433,7 +436,9 @@ class WebSocketClient
             $this->pendingAcks[$ackId] = $ack;
         }
 
-        $this->sendRawFrame(json_encode($payload), 0x1);
+        if (!$this->sendRawFrame(json_encode($payload), 0x1)) {
+            throw new \RuntimeException("Not connected to WebSocket server (connection lost while sending '{$event}')");
+        }
         return $this;
     }
 
@@ -483,15 +488,29 @@ class WebSocketClient
     public function sendRaw(string $payload): self
     {
         $this->requireConnection();
-        $this->sendRawFrame($payload, 0x1);
+
+        // Same keepalive pump as emit() — answer pending pings first.
+        $this->listen(0);
+        $this->requireConnection();
+
+        if (!$this->sendRawFrame($payload, 0x1)) {
+            throw new \RuntimeException("Not connected to WebSocket server (connection lost while sending raw payload)");
+        }
         return $this;
     }
 
     /**
      * Build and write a masked WebSocket frame to the server.
+     *
+     * @return bool False when the socket is dead (broken pipe / closed) —
+     *              the connection is torn down locally in that case.
      */
-    private function sendRawFrame(string $payload, int $opcode): void
+    private function sendRawFrame(string $payload, int $opcode): bool
     {
+        if (!$this->socket || !is_resource($this->socket)) {
+            return false;
+        }
+
         $length = strlen($payload);
         $mask = random_bytes(4);
 
@@ -514,7 +533,39 @@ class WebSocketClient
             $frame .= $payload[$i] ^ $mask[$i % 4];
         }
 
-        fwrite($this->socket, $frame);
+        // Suppressed: a broken pipe raises a PHP warning (which strict
+        // error handlers escalate to an exception) — handle it as a normal
+        // "peer went away" event instead of crashing the caller.
+        $written = @fwrite($this->socket, $frame);
+
+        if ($written === false || $written === 0) {
+            $this->teardown('write_failed');
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Locally tear the connection down without attempting further writes
+     * (the socket is already dead or dying).
+     */
+    private function teardown(string $reason): void
+    {
+        $wasConnected = $this->connected;
+
+        $this->connected = false;
+        $this->rooms = [];
+        $this->clientId = '';
+
+        if ($this->socket && is_resource($this->socket)) {
+            @fclose($this->socket);
+        }
+        $this->socket = null;
+
+        if ($wasConnected) {
+            $this->dispatch('disconnected', ['reason' => $reason]);
+        }
     }
 
     // ─── Rooms ───────────────────────────────────────────────────────
@@ -598,6 +649,25 @@ class WebSocketClient
             return 0;
         }
 
+        // Re-entrancy guard: emit() pumps the socket via listen(0), and a
+        // dispatched handler may itself call emit() — don't recurse.
+        if ($this->pumping) {
+            return 0;
+        }
+        $this->pumping = true;
+
+        try {
+            return $this->doListen($waitSeconds);
+        } finally {
+            $this->pumping = false;
+        }
+    }
+
+    /**
+     * The actual read/dispatch loop behind listen().
+     */
+    private function doListen(float $waitSeconds): int
+    {
         $dispatched = 0;
         $deadline = microtime(true) + $waitSeconds;
 
@@ -627,16 +697,14 @@ class WebSocketClient
 
                 switch ($frame['opcode']) {
                     case 0x8: // Server sent close
-                        $this->connected = false;
-                        if (is_resource($this->socket)) {
-                            fclose($this->socket);
-                        }
-                        $this->socket = null;
-                        $this->dispatch('disconnected', ['reason' => 'server_close']);
+                        $this->teardown('server_close');
                         return $dispatched;
 
                     case 0x9: // Ping → reply Pong
-                        $this->sendRawFrame($frame['payload'], 0xA);
+                        if (!$this->sendRawFrame($frame['payload'], 0xA)) {
+                            // Socket died while replying — already torn down.
+                            return $dispatched;
+                        }
                         break;
 
                     case 0xA: // Pong (ignore)

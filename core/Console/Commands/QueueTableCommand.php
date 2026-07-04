@@ -6,10 +6,10 @@ use Framework\Core\Console\Command;
 
 class QueueTableCommand extends Command
 {
-    protected static $defaultName = 'queue:table';
-    protected static $description = 'Create a migration for the queue jobs database table';
+    protected string $signature = 'queue:table';
+    protected string $description = 'Create a migration for the queue jobs database table';
 
-    public function execute(array $args): void
+    public function execute(): void
     {
         $timestamp = date('YmdHis');
         $filename = "{$timestamp}_create_framework_jobs_table.php";
@@ -52,21 +52,32 @@ class {$className} extends Migration
             \$table->string('queue');
             \$table->text('payload');
             \$table->integer('attempts');
-            // Using integer for timestamps to match our database worker needs
+            // Unix timestamps — the worker compares these with time()
             \$table->integer('reserved_at')->nullable();
             \$table->integer('available_at')->nullable();
             \$table->timestamps();
         });
+
+        // Dead-letter store: jobs that exhausted their retries land here
+        // (inspect with `php console queue:failed`, re-run with queue:retry).
+        \$this->createTable('_framework_failed_jobs', function (Schema \$table) {
+            \$table->id();
+            \$table->string('queue');
+            \$table->text('payload');
+            \$table->text('error');
+            \$table->string('failed_at');
+        });
     }
-    
+
     /**
      * Reverse the migration
-     * 
+     *
      * @return void
      */
     public function down(): void
     {
         \$this->dropTable('_framework_jobs');
+        \$this->dropTable('_framework_failed_jobs');
     }
 }
 

@@ -3,66 +3,51 @@
 namespace Framework\Core\Console\Commands;
 
 use Framework\Core\Console\Command;
-use RecursiveDirectoryIterator;
-use RecursiveIteratorIterator;
-use RegexIterator;
+use Framework\Core\Testing\TestRunner;
 
+/**
+ * `php console test` — run the application test suite.
+ *
+ *   php console test                       # run everything in tests/
+ *   php console test tests/Unit            # run a subdirectory or file
+ *   php console test --filter=Encryption   # only Class::method matching
+ *   php console test --stop-on-failure     # halt on first failure/error
+ *   php console test --no-color            # plain output (CI logs)
+ */
 class TestRunCommand extends Command
 {
     protected string $signature = 'test';
-    protected string $description = 'Run all application tests recursively';
+    protected string $description = 'Run the application test suite';
 
     public function execute(): void
     {
-        $this->info("🚀 Initializing Test Suite...");
-        
-        $testDir = dirname(__DIR__, 3) . '/storage/framework/testing';
-        
-        // 1. Find ALL files ending in Test.php recursively
-        $directory = new RecursiveDirectoryIterator($testDir);
-        $iterator = new RecursiveIteratorIterator($directory);
-        $testFiles = new RegexIterator($iterator, '/^.+Test\.php$/i', RegexIterator::GET_MATCH);
+        $root = dirname(__DIR__, 3);
 
-        $passed = 0;
-        $failed = 0;
+        // Optional positional arg: a path relative to the project root
+        // (or an absolute path). Defaults to the tests/ directory.
+        $target = $this->argument(0, 'tests');
+        $path = $this->isAbsolute($target) ? $target : $root . '/' . ltrim($target, '/');
 
-        foreach ($testFiles as $file) {
-            $filePath = $file[0];
-            require_once $filePath;
+        $filter = $this->option('filter');
+        $stopOnFailure = (bool) $this->option('stop-on-failure', false);
+        $colors = !$this->option('no-color', false);
 
-            // 2. Determine class name based on file path (assumes PSR-4)
-            // Example: /tests/Feature/UserTest.php -> Tests\Feature\UserTest
-            $relative = str_replace([$testDir, '.php', '/'], ['', '', '\\'], $filePath);
-            $className = "Tests" . $relative;
+        $this->info("Framework Test Runner");
+        $this->line(str_repeat('=', 30));
 
-            if (!class_exists($className)) {
-                $this->error("Could not find class: {$className} in {$filePath}");
-                continue;
-            }
+        $runner = new TestRunner(
+            $path,
+            is_string($filter) ? $filter : null,
+            $stopOnFailure,
+            $colors
+        );
 
-            $testInstance = new $className();
-            $this->line("\nRunning: " . $className);
+        // Exit with the runner's status so CI can gate on it.
+        exit($runner->run());
+    }
 
-            $methods = get_class_methods($testInstance);
-            foreach ($methods as $method) {
-                if (str_starts_with($method, 'test')) {
-                    try {
-                        // 3. Always run setUp if it exists
-                        if (method_exists($testInstance, 'setUp')) {
-                            $testInstance->setUp();
-                        }
-
-                        $testInstance->$method();
-                        $passed++;
-                    } catch (\Throwable $e) {
-                        $this->error("  ❌ {$method} failed: " . $e->getMessage());
-                        $failed++;
-                    }
-                }
-            }
-        }
-
-        $this->line("\n" . str_repeat('=', 30));
-        $this->info("Tests Complete: {$passed} passed, {$failed} failed.");
+    private function isAbsolute(string $path): bool
+    {
+        return str_starts_with($path, '/') || preg_match('/^[A-Za-z]:[\\\\\/]/', $path) === 1;
     }
 }

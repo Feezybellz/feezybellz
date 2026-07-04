@@ -95,6 +95,20 @@ class State
         if (class_exists(\Framework\Core\Auth\Auth::class)) {
             \Framework\Core\Auth\Auth::reset();
         }
+
+        // Events: drop registered listeners so per-request listen() calls
+        // don't accumulate (duplicate handler runs) across worker requests.
+        // App-level listeners registered at boot are re-registered by the
+        // next request's bootstrap.
+        if (class_exists(\Framework\Core\Events\Dispatcher::class)) {
+            \Framework\Core\Events\Dispatcher::flush();
+        }
+
+        // Queue: drop the resolved driver (and its connection) so the next
+        // request re-reads config — mirrors the Cache/Storage resets.
+        if (class_exists(\Framework\Core\Queue\Queue::class)) {
+            \Framework\Core\Queue\Queue::reset();
+        }
     }
 
     /**

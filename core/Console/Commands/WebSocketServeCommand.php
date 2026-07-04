@@ -37,6 +37,18 @@ class WebSocketServeCommand extends Command
         $server = new WebSocketServer($host, $port, $internalPort);
         $server->setSilent((bool)$this->option('silent'));
 
+        // Keepalive tuning — operators can adjust without touching code.
+        // ping_interval must be shorter than any proxy idle timeout in
+        // front of the server (nginx proxy_read_timeout, LB idle, etc.)
+        // or idle-but-healthy connections get severed by the middlebox.
+        $server->setPingConfig(
+            (int) $this->option('ping-interval', config('app.websocket.ping_interval', 30)),
+            (int) $this->option('ping-timeout', config('app.websocket.ping_timeout', 10))
+        );
+        $server->setHandshakeTimeout(
+            (int) config('app.websocket.handshake_timeout', 10)
+        );
+
         // Configure SSL if certificate provided
         if ($sslCert !== '') {
             if (!file_exists($sslCert)) {

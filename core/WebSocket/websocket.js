@@ -14,6 +14,7 @@ class WsClient {
         this.reconnectAttempts = 0;
         this.pingInterval = null;
         this.intentionallyDisconnected = false;
+        this.lastActivityAt = 0; // timestamp of the last message from the server
         
         if (this.autoConnect) this.connect();
     }
@@ -34,12 +35,14 @@ class WsClient {
             this.ws = new WebSocket(this.url);
             
             this.ws.onopen = (event) => {
-                this.reconnectAttempts = 0; 
+                this.reconnectAttempts = 0;
+                this.lastActivityAt = Date.now();
                 this.startHeartbeat();
                 this._trigger('connect', event);
             };
-            
+
             this.ws.onmessage = (event) => {
+                this.lastActivityAt = Date.now(); // any traffic proves the link is alive
                 try {
                     const parsed = JSON.parse(event.data);
                     if (parsed && parsed.event) this._trigger(parsed.event, parsed.data);
@@ -142,7 +145,21 @@ class WsClient {
 
     startHeartbeat() {
         this.stopHeartbeat();
-        this.pingInterval = setInterval(() => this.emit('ping', { timestamp: Date.now() }), this.pingIntervalMs);
+        this.pingInterval = setInterval(() => {
+            // Dead-link detection: the server answers every app-level ping
+            // with a 'pong' event, so a healthy-but-idle connection still
+            // produces traffic each interval. If we've heard nothing for
+            // two full intervals (+ grace), the TCP link is half-dead
+            // (mobile network switch, NAT timeout) and onclose may never
+            // fire on its own — force a close to trigger the reconnector.
+            const silence = Date.now() - this.lastActivityAt;
+            if (this.lastActivityAt > 0 && silence > this.pingIntervalMs * 2 + 5000) {
+                this._trigger('stale_connection', { silenceMs: silence });
+                if (this.ws) this.ws.close(); // onclose → attemptReconnect()
+                return;
+            }
+            this.emit('ping', { timestamp: Date.now() });
+        }, this.pingIntervalMs);
     }
 
     stopHeartbeat() {

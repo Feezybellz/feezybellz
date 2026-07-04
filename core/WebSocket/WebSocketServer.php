@@ -26,6 +26,14 @@ class WebSocketServer
     private $maxPendingFrames = 100;
     private $maxConnections = 10000;
 
+    /**
+     * Seconds a raw TCP connection may sit without completing the
+     * WebSocket handshake before being dropped. Prevents pre-handshake
+     * sockets (which the heartbeat otherwise ignores) from occupying
+     * connection slots forever.
+     */
+    private $handshakeTimeout = 10;
+
     public function __construct(string $host = '0.0.0.0', int $port = 8080, int $internalPort = 8081)
     {
         $this->host = $host;
@@ -50,6 +58,14 @@ class WebSocketServer
     {
         $this->pingInterval = $interval;
         $this->pingTimeout = $timeout;
+    }
+
+    /**
+     * Seconds before an un-handshaken TCP connection is dropped.
+     */
+    public function setHandshakeTimeout(int $seconds): void
+    {
+        $this->handshakeTimeout = max(1, $seconds);
     }
 
     public function setLimits(int $maxBufferSize = 1048576, int $maxPendingFrames = 100, int $maxConnections = 10000): void
@@ -246,6 +262,7 @@ class WebSocketServer
             'rooms'         => [],
             'buffer'        => '',
             'lastPong'      => microtime(true),
+            'connectedAt'   => microtime(true),
             'pendingFrames' => [],
             'customData'    => [], // Persistent storage bucket for $socket->property access
         ];
@@ -325,6 +342,11 @@ class WebSocketServer
 
             // Advance the buffer past the consumed bytes
             $client['buffer'] = substr($client['buffer'], $frame['bytesRead']);
+
+            // Any complete inbound frame proves the peer is alive — refresh
+            // the liveness clock so busy clients are never culled just
+            // because a protocol pong got queued behind data frames.
+            $client['lastPong'] = microtime(true);
 
             switch ($frame['opcode']) {
                 case 0x8: // Close
@@ -504,9 +526,18 @@ class WebSocketServer
         }
 
         $frame = WebSocketFrame::encode($payload, $opcode);
-        $result = \fwrite($this->clients[$clientId]['socket'], $frame);
+        $result = @\fwrite($this->clients[$clientId]['socket'], $frame);
 
-        return $result !== false;
+        // fwrite === false means the socket is gone (broken pipe) — clean
+        // up immediately instead of waiting for the heartbeat to notice.
+        // (A short write > 0 is NOT treated as dead: that's just a full
+        // kernel buffer on a slow-but-alive client.)
+        if ($result === false) {
+            $this->disconnect($clientId);
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -699,6 +730,17 @@ class WebSocketServer
      */
     private function handleEvent(string $clientId, string $event, $data, $ackId = null): void
     {
+        // Built-in keepalive: application-level pings (sent by websocket.js
+        // every pingIntervalMs) always get a pong back, so clients can
+        // detect half-dead TCP links and reconnect. App handlers registered
+        // for 'ping' still run afterwards.
+        if ($event === 'ping') {
+            $this->send($clientId, 'pong', [
+                'timestamp' => is_array($data) ? ($data['timestamp'] ?? null) : null,
+                'serverTime' => (int) (microtime(true) * 1000),
+            ]);
+        }
+
         $eventData = [
             'clientId' => $clientId,
             'data'     => $data,
@@ -860,6 +902,14 @@ class WebSocketServer
         $deadline = $this->pingInterval + $this->pingTimeout;
         foreach ($this->clients as $clientId => $client) {
             if (!$client['handshake']) {
+                // Pre-handshake sockets get their own (shorter) deadline —
+                // otherwise a connection that never completes the upgrade
+                // occupies a slot forever.
+                $age = $now - ($client['connectedAt'] ?? $now);
+                if ($age > $this->handshakeTimeout) {
+                    $this->log("Dropping connection {$clientId}: no handshake after {$this->handshakeTimeout}s");
+                    $this->disconnect($clientId);
+                }
                 continue;
             }
             $elapsed = $now - $client['lastPong'];

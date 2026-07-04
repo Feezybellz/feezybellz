@@ -34,4 +34,44 @@ return [
      */
     'port' => 9090,
 
+    /**
+     * -------------------------------------------------------------------------
+     * Driver-based queue (Queue::push / Queue::pop / queue:work)
+     * -------------------------------------------------------------------------
+     *
+     * Separate from the in-memory queue server above. These keys configure
+     * the Queue facade used by `php console queue:work` and by queued event
+     * listeners.
+     *
+     * Drivers: 'redis' (php-redis extension) or 'database' (uses the
+     * _framework_jobs table — create it with `php console queue:table`
+     * followed by `php console migrate`).
+     */
+    'default' => env('QUEUE_DRIVER', 'redis'),
+
+    'connections' => [
+
+        'redis' => [
+            'driver'      => 'redis',
+            'host'        => env('REDIS_HOST', '127.0.0.1'),
+            'port'        => (int) env('REDIS_PORT', 6379),
+            'password'    => env('REDIS_PASSWORD', ''),
+            'database'    => (int) env('REDIS_QUEUE_DB', 0),
+            'prefix'      => 'framework_queue:',
+            // Seconds before a crashed worker's reservation is reclaimed.
+            // Must exceed your longest-running job.
+            'retry_after' => 90,
+        ],
+
+        'database' => [
+            'driver'       => 'database',
+            'table'        => '_framework_jobs',
+            'failed_table' => '_framework_failed_jobs',
+            // Seconds before a crashed worker's reservation is reclaimed.
+            // Must exceed your longest-running job.
+            'retry_after'  => 90,
+        ],
+
+    ],
+
 ];

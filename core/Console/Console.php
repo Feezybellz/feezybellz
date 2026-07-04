@@ -67,7 +67,11 @@ class Console
             // ── Queue Commands ──────────────────────────────────────────
             'queue:serve'      => Commands\QueueServeCommand::class,
             'queue:ui'         => Commands\QueueDashboardCommand::class,
-            'queue:test'       => Commands\QueueTestCommand::class,
+            'queue:work'       => Commands\QueueWorkCommand::class,
+            'queue:table'      => Commands\QueueTableCommand::class,
+            'queue:failed'     => Commands\QueueFailedCommand::class,
+            'queue:retry'      => Commands\QueueRetryCommand::class,
+            'queue:flush'      => Commands\QueueFlushCommand::class,
             
             'help'             => Commands\HelpCommand::class,
             'schedule:run'     => Commands\ScheduleRunCommand::class,

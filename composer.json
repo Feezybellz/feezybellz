@@ -15,6 +15,14 @@
       "bootstrap/helpers.php"
     ]
   },
+  "autoload-dev": {
+    "psr-4": {
+      "Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "php console test"
+  },
   "minimum-stability": "stable",
   "config": {
     "platform": {

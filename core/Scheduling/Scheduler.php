@@ -18,13 +18,21 @@ class Scheduler
 
     /**
      * Schedule an existing Console Command to run.
+     *
+     * @param string $commandClass FQCN of a Command subclass.
+     * @param array  $args         Extra CLI-style arguments/options, e.g.
+     *                             ['emails', '--once'] — parsed exactly as
+     *                             if typed after the command name.
      */
-    public function command(string $commandClass): Event
+    public function command(string $commandClass, array $args = []): Event
     {
-        return $this->call(function () use ($commandClass) {
-            $instance = new $commandClass();
-            // Assuming your commands have an execute() method
-            return $instance->execute(); 
+        return $this->call(function () use ($commandClass, $args) {
+            // Command::__construct(array $argv) expects real argv shape:
+            // [script, commandName, ...args] — parseArguments() reads from
+            // index 2 onward. (`new $commandClass()` used to fatal with an
+            // ArgumentCountError here.)
+            $instance = new $commandClass(array_merge(['console', $commandClass], $args));
+            return $instance->execute();
         });
     }
 
