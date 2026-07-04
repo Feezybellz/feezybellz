@@ -75,6 +75,7 @@ class Console
             
             'help'             => Commands\HelpCommand::class,
             'schedule:run'     => Commands\ScheduleRunCommand::class,
+            'schedule:work'    => Commands\ScheduleWorkCommand::class,
             'setup'            => Commands\SetupCommand::class,
             'system:permissions' => Commands\SystemPermissionsCommand::class,
             'test'             => Commands\TestRunCommand::class,

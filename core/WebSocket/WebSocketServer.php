@@ -34,6 +34,16 @@ class WebSocketServer
      */
     private $handshakeTimeout = 10;
 
+    /**
+     * HMAC key for the internal trigger port. Loopback binding alone does
+     * not authenticate — any local process could otherwise inject
+     * broadcasts. See WS::buildEnvelope() for the wire format.
+     */
+    private $internalSecret = '';
+
+    /** @var bool When true, unsigned internal-trigger payloads are rejected. */
+    private $requireInternalSignature = true;
+
     public function __construct(string $host = '0.0.0.0', int $port = 8080, int $internalPort = 8081)
     {
         $this->host = $host;
@@ -66,6 +76,27 @@ class WebSocketServer
     public function setHandshakeTimeout(int $seconds): void
     {
         $this->handshakeTimeout = max(1, $seconds);
+    }
+
+    /**
+     * HMAC key for internal trigger authentication (usually APP_KEY —
+     * a `base64:` prefix is unwrapped).
+     */
+    public function setInternalSecret(string $secret): void
+    {
+        if (strpos($secret, 'base64:') === 0) {
+            $secret = base64_decode(substr($secret, 7));
+        }
+        $this->internalSecret = $secret;
+    }
+
+    /**
+     * Require signed internal-trigger payloads (default true). Disable
+     * only in development on a single-user machine.
+     */
+    public function setRequireInternalSignature(bool $on): void
+    {
+        $this->requireInternalSignature = $on;
     }
 
     public function setLimits(int $maxBufferSize = 1048576, int $maxPendingFrames = 100, int $maxConnections = 10000): void
@@ -114,6 +145,18 @@ class WebSocketServer
      */
     public function start(): void
     {
+        // Refuse to boot half-secured (same posture as QueueServer): the
+        // internal port would accept unauthenticated broadcasts from any
+        // local process. Either provide a secret (APP_KEY suffices) or
+        // consciously opt out via setRequireInternalSignature(false).
+        if ($this->requireInternalSignature && $this->internalSecret === '') {
+            throw new \RuntimeException(
+                "WebSocketServer: internal-trigger signatures are required but no secret is configured. "
+                . "Set APP_KEY (or app.websocket.internal_secret), or call setRequireInternalSignature(false) "
+                . "only if you fully understand the risk."
+            );
+        }
+
         $protocol = $this->isSSL() ? 'ssl' : 'tcp';
         $address = "{$protocol}://{$this->host}:{$this->port}";
         $internalAddress = "tcp://127.0.0.1:{$this->internalPort}";
@@ -960,11 +1003,69 @@ class WebSocketServer
      */
     private function handleInternalTrigger(string $data): void
     {
-        $payload = json_decode($data, true);
+        $decoded = json_decode($data, true);
+        if (!is_array($decoded)) {
+            return;
+        }
+
+        // Signed envelope: { v, ts, payload: "<json>", sig } — see
+        // WS::buildEnvelope(). The signature covers "ts.payload" so the
+        // timestamp can't be swapped to replay an old capture.
+        if (isset($decoded['sig'], $decoded['payload'], $decoded['ts'])) {
+            $payload = $this->verifyInternalEnvelope($decoded);
+            if ($payload === null) {
+                return; // rejected (logged inside)
+            }
+        } else {
+            // Bare legacy payload — only acceptable when signatures are
+            // explicitly disabled AND no secret is configured.
+            if ($this->requireInternalSignature || $this->internalSecret !== '') {
+                $this->log("Internal trigger rejected: unsigned payload (require_internal_signature is on)");
+                return;
+            }
+            $payload = $decoded;
+        }
+
         if (!$payload || !isset($payload['event'])) return;
 
         // Emit a global event. Controllers or Routes can listen to this.
         // We pass the server instance ($this) as the second argument.
         $this->emit($payload['event'], $payload);
+    }
+
+    /**
+     * Verify a signed internal-trigger envelope. Returns the decoded
+     * payload array, or null on any failure.
+     */
+    private function verifyInternalEnvelope(array $envelope): ?array
+    {
+        if ($this->internalSecret === '') {
+            $this->log("Internal trigger rejected: signed payload received but no internal secret is configured");
+            return null;
+        }
+
+        $ts = (int) $envelope['ts'];
+        $payloadJson = $envelope['payload'];
+        $sig = $envelope['sig'];
+
+        if (!is_string($payloadJson) || !is_string($sig)) {
+            $this->log("Internal trigger rejected: malformed envelope");
+            return null;
+        }
+
+        // Replay window.
+        if (abs(time() - $ts) > WS::REPLAY_WINDOW) {
+            $this->log("Internal trigger rejected: timestamp outside replay window");
+            return null;
+        }
+
+        $expected = hash_hmac('sha256', $ts . '.' . $payloadJson, $this->internalSecret);
+        if (!hash_equals($expected, $sig)) {
+            $this->log("Internal trigger rejected: signature mismatch");
+            return null;
+        }
+
+        $payload = json_decode($payloadJson, true);
+        return is_array($payload) ? $payload : null;
     }
 }

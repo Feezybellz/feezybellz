@@ -49,6 +49,14 @@ class WebSocketServeCommand extends Command
             (int) config('app.websocket.handshake_timeout', 10)
         );
 
+        // Internal trigger auth: loopback binding alone doesn't stop other
+        // local processes from injecting broadcasts. Secret defaults to
+        // APP_KEY (WS::send() signs with the same resolution order).
+        $server->setInternalSecret(\Framework\Core\WebSocket\WS::internalSecret());
+        $server->setRequireInternalSignature(
+            (bool) config('app.websocket.require_internal_signature', true)
+        );
+
         // Configure SSL if certificate provided
         if ($sslCert !== '') {
             if (!file_exists($sslCert)) {
@@ -277,10 +285,11 @@ $server->on('connection', function($data, $socket) {
         $server->on('broadcast', function($payload) use ($server) {
             $event = $payload['data']['event'] ?? 'message';
             $data = $payload['data']['payload'] ?? [];
-            
-            foreach ($server->getClients() as $client) {
-                $client->emit($event, $data);
-            }
+
+            // Use the server's own broadcast — getClients() returns raw
+            // client-record arrays, not emit()-capable objects. (The old
+            // loop fataled on every WS::broadcast() call.)
+            $server->broadcast($event, $data);
         });
 
         $server->on('room_broadcast', function($payload) use ($server) {

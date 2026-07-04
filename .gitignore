@@ -1,10 +1,11 @@
 .env
 .env.*
+!.env.example
 *.md
+!docs/**
 storage/*
 storage/services/
 *.log
-!usage.md
 hidden/
 legal/
 vendor/

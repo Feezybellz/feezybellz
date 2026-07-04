@@ -51,6 +51,20 @@ return [
         'port'          => env('WS_PORT', 8080),
         'internal_port' => env('WS_INTERNAL_PORT', 8081),
         'host'          => env('WS_HOST', '0.0.0.0'),
+
+        // Keepalive: ping_interval must be shorter than any proxy idle
+        // timeout in front of the server (nginx proxy_read_timeout, LB
+        // idle) or idle-but-healthy connections get severed mid-path.
+        'ping_interval'     => (int) env('WS_PING_INTERVAL', 30),
+        'ping_timeout'      => (int) env('WS_PING_TIMEOUT', 10),
+        'handshake_timeout' => (int) env('WS_HANDSHAKE_TIMEOUT', 10),
+
+        // Internal trigger port auth. WS::broadcast()/WS::to() HMAC-sign
+        // every payload; the server rejects unsigned/invalid ones. The
+        // secret defaults to APP_KEY — set this only to use a dedicated
+        // key. Disabling the requirement is dev-only.
+        'internal_secret'            => env('WS_INTERNAL_SECRET', ''),
+        'require_internal_signature' => env('WS_REQUIRE_INTERNAL_SIGNATURE', true),
     ],
 
     /*
