@@ -353,21 +353,26 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
 
     public function save()
     {
+        if (method_exists($this, 'beforeSave')) {
+            $this->beforeSave();
+        }
+        
         $now = date('Y-m-d H:i:s');
         
         if ($this->exists) {
             $id = $this->attributes[$this->primaryKey];
-            $updateData = $this->attributes;
-            unset($updateData[$this->primaryKey]);
+            $updateData = clone $this;
+            $updateDataArray = $updateData->attributes;
+            unset($updateDataArray[$this->primaryKey]);
             
-            if ($this->timestamps && !isset($updateData['updated_at'])) {
-                $updateData['updated_at'] = $now;
+            if ($this->timestamps && !isset($updateDataArray['updated_at'])) {
+                $updateDataArray['updated_at'] = $now;
                 $this->forceFill('updated_at', $now);
             }
             
             $builder = static::table($this->table)->on($this->connection)->where($this->primaryKey, '=', $id);
             $builder->operation = 'update';
-            $builder->data = $updateData;
+            $builder->data = $updateDataArray;
             return DB::connection($this->connection)->executeBuilder($builder);
         } else {
             if ($this->timestamps) {
@@ -889,6 +894,11 @@ abstract class Model implements \JsonSerializable, \ArrayAccess
         $instance->setConnection($connection);
         foreach ((array)$attributes as $k => $v) $instance->forceFill($k, $v);
         $instance->exists = true;
+        
+        if (method_exists($instance, 'afterFind')) {
+            $instance->afterFind();
+        }
+        
         return $instance;
     }
 

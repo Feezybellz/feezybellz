@@ -288,6 +288,29 @@ if (!function_exists('config')) {
 }
 
 
+if (!function_exists('dotenv_keys')) {
+    /**
+     * Registry of variable names env() loaded from the .env file — i.e. the
+     * ones that were NOT already provided by the real shell environment.
+     *
+     * Consumers (like `console serve`) use this to strip .env-derived values
+     * before spawning child processes, so the child re-reads .env itself
+     * instead of inheriting a stale baked-in copy, while genuine shell
+     * exports still pass through untouched.
+     *
+     * @param string|null $add Internal: env() passes a name here to record it.
+     * @return string[] Names of keys sourced from .env.
+     */
+    function dotenv_keys(?string $add = null): array
+    {
+        static $keys = [];
+        if ($add !== null) {
+            $keys[$add] = true;
+        }
+        return array_keys($keys);
+    }
+}
+
 if (!function_exists('env')) {
     /**
      * Get an environment variable with support for putenv/getenv and nested variables.
@@ -343,6 +366,7 @@ if (!function_exists('env')) {
                     if (!array_key_exists($name, $_ENV) && getenv($name) === false) {
                         $_ENV[$name] = $value;
                         putenv("{$name}=" . (is_bool($value) ? ($value ? 'true' : 'false') : (string)$value));
+                        dotenv_keys($name);
                     }
                 }
 

@@ -15,7 +15,7 @@ class SeedCommand extends Command
      */
     public function execute(): void
     {
-        $seederName = $this->argument(0);
+        $seederName = $this->argument(0) ?? $this->option('class');
         
         // Custom db info parameters
         $driver = $this->option('driver');

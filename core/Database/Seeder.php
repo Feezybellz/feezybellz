@@ -121,6 +121,165 @@ abstract class Seeder
     }
 
     /**
+     * Seed from a raw SQL file using the MySQL CLI (fastest and safest for large files).
+     */
+    protected function seedFromSQL(string $filePath): bool
+    {
+        if (!file_exists($filePath)) {
+            $this->error("SQL file not found: {$filePath}");
+            return false;
+        }
+
+        $connections = DB::getConnections();
+        $connConfig = $connections[$this->connection] ?? null;
+
+        if ($connConfig) {
+            $driver = $connConfig['driver'] ?? 'mysql';
+            $host = $connConfig['host'] ?? '127.0.0.1';
+            $user = $connConfig['username'] ?? 'root';
+            $pass = $connConfig['password'] ?? '';
+            $db   = $connConfig['database'] ?? null;
+            $port = $connConfig['port'] ?? 3306;
+        } else {
+            // Fallback to env
+            $driver = $_ENV['DB_CONNECTION'] ?? getenv('DB_CONNECTION') ?: 'mysql';
+            $host = $_ENV['DB_HOST'] ?? getenv('DB_HOST') ?: '127.0.0.1';
+            $user = $_ENV['DB_USERNAME'] ?? getenv('DB_USERNAME') ?: 'root';
+            $pass = $_ENV['DB_PASSWORD'] ?? getenv('DB_PASSWORD') ?: '';
+            $db   = $_ENV['DB_DATABASE'] ?? getenv('DB_DATABASE');
+            $port = $_ENV['DB_PORT'] ?? getenv('DB_PORT') ?: 3306;
+        }
+
+        if (!$db) {
+            $this->error("Database name is not set in the environment or config.");
+            return false;
+        }
+
+        switch ($driver) {
+            case 'mysql':
+                $command = sprintf(
+                    'mysql -h %s -P %s -u %s %s %s < %s',
+                    escapeshellarg($host),
+                    escapeshellarg($port),
+                    escapeshellarg($user),
+                    $pass ? '-p' . escapeshellarg($pass) : '',
+                    escapeshellarg($db),
+                    escapeshellarg($filePath)
+                );
+                break;
+            case 'pgsql':
+            case 'postgresql':
+                $command = sprintf(
+                    'PGPASSWORD=%s psql -h %s -p %s -U %s -d %s -f %s',
+                    escapeshellarg($pass),
+                    escapeshellarg($host),
+                    escapeshellarg($port),
+                    escapeshellarg($user),
+                    escapeshellarg($db),
+                    escapeshellarg($filePath)
+                );
+                break;
+            case 'sqlite':
+                if ($db === ':memory:') {
+                    $this->error("Cannot seed SQL file into in-memory SQLite database via CLI.");
+                    return false;
+                }
+                $command = sprintf('sqlite3 %s < %s', escapeshellarg($db), escapeshellarg($filePath));
+                break;
+            case 'sqlsrv':
+            case 'sqlserver':
+                $command = sprintf(
+                    'sqlcmd -S %s,%s -U %s -P %s -d %s -i %s',
+                    escapeshellarg($host),
+                    escapeshellarg($port),
+                    escapeshellarg($user),
+                    escapeshellarg($pass),
+                    escapeshellarg($db),
+                    escapeshellarg($filePath)
+                );
+                break;
+            case 'mongodb':
+                $this->error("Cannot import a .sql file into MongoDB. Use seedFromJSON() or seedFromMongoRestore() for MongoDB databases instead.");
+                return false;
+            default:
+                $this->error("Driver [{$driver}] does not support raw SQL file seeding via CLI.");
+                return false;
+        }
+
+        $this->info("Importing SQL file into [{$driver}: {$db}]: {$filePath} ...");
+        exec($command, $output, $returnVar);
+
+        if ($returnVar !== 0) {
+            $this->error("Failed to import SQL file. Make sure the mysql CLI tool is installed.");
+            return false;
+        }
+
+        $this->success("Successfully imported: {$filePath} into [{$driver}: {$db}]");
+        return true;
+    }
+
+    /**
+     * Seed MongoDB from a JSON or CSV file using the mongoimport CLI tool.
+     */
+    protected function seedFromMongoJSON(string $filePath, string $collection, string $type = 'json', bool $jsonArray = true): bool
+    {
+        if (!file_exists($filePath)) {
+            $this->error("File not found: {$filePath}");
+            return false;
+        }
+
+        $connections = DB::getConnections();
+        $connConfig = $connections[$this->connection] ?? null;
+
+        $host = $connConfig['host'] ?? $_ENV['MONGO_HOST'] ?? '127.0.0.1';
+        $port = $connConfig['port'] ?? $_ENV['MONGO_PORT'] ?? 27017;
+        $user = $connConfig['username'] ?? $_ENV['MONGO_USERNAME'] ?? '';
+        $pass = $connConfig['password'] ?? $_ENV['MONGO_PASSWORD'] ?? '';
+        $db   = $connConfig['database'] ?? $_ENV['MONGO_DATABASE'] ?? null;
+        $auth = $connConfig['options']['authSource'] ?? $_ENV['MONGO_AUTH_SOURCE'] ?? 'admin';
+
+        if (!$db) {
+            $this->error("MongoDB database name is not set.");
+            return false;
+        }
+
+        // Build the mongoimport command
+        $command = sprintf(
+            'mongoimport --host %s --port %s --db %s --collection %s --type %s --file %s',
+            escapeshellarg($host),
+            escapeshellarg($port),
+            escapeshellarg($db),
+            escapeshellarg($collection),
+            escapeshellarg($type),
+            escapeshellarg($filePath)
+        );
+
+        if ($user) {
+            $command .= sprintf(
+                ' --username %s --password %s --authenticationDatabase %s',
+                escapeshellarg($user),
+                escapeshellarg($pass),
+                escapeshellarg($auth)
+            );
+        }
+
+        if ($type === 'json' && $jsonArray) {
+            $command .= ' --jsonArray';
+        }
+
+        $this->info("Importing MongoDB file into [{$db}.{$collection}]: {$filePath} ...");
+        exec($command, $output, $returnVar);
+
+        if ($returnVar !== 0) {
+            $this->error("Failed to import MongoDB file. Make sure 'mongoimport' is installed.");
+            return false;
+        }
+
+        $this->success("Successfully imported: {$filePath} into [{$db}.{$collection}]");
+        return true;
+    }
+
+    /**
      * Call multiple seeders.
      * * @param array $seederClasses
      * @return void

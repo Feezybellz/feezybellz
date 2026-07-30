@@ -38,6 +38,24 @@ fi
 
 echo "Detected package manager: $PKG_MANAGER"
 
+# Does apt have a real installation candidate for this package?
+#
+# On Debian, `mysql-server` is referred to by other packages but has no candidate of
+# its own — apt reports "Candidate: (none)". Asking first means we can fall through to
+# the package that does exist instead of failing the whole run.
+#
+# Fails open: only an explicit "(none)" counts as unavailable. If apt-cache is missing
+# or says nothing we can read, the package is still worth attempting — a failed install
+# attempt is recoverable, whereas skipping every candidate leaves nothing installed.
+apt_has_candidate() {
+    local pkg=$1
+    local candidate
+
+    candidate=$(apt-cache policy "$pkg" 2>/dev/null | awk -F': ' '/Candidate:/ {print $2; exit}')
+
+    [ "$candidate" != "(none)" ]
+}
+
 install_pkg() {
     local apt_pkg=$1
     local yum_pkg=$2
@@ -50,7 +68,30 @@ install_pkg() {
     echo "Installing packages..."
     local success=0
     if [ "$PKG_MANAGER" == "apt" ]; then
-        eval "$INSTALL_CMD $apt_pkg" && success=1
+        # apt_pkg may be a '|'-separated list of equivalent candidates, most preferred
+        # first — see the MySQL/MariaDB note below. The first one apt can actually
+        # install wins.
+        local candidates pkg
+        IFS='|' read -ra candidates <<< "$apt_pkg"
+
+        for pkg in "${candidates[@]}"; do
+            if [ ${#candidates[@]} -gt 1 ] && ! apt_has_candidate "$pkg"; then
+                echo "  '$pkg' is not available in this distribution's repositories, trying the next option..."
+                continue
+            fi
+
+            # Keep the package's own prompts (root password, config file diffs) from
+            # hanging an otherwise unattended run. sudo takes VAR=value before the
+            # command, which is why this spells out apt-get rather than reusing
+            # INSTALL_CMD (which already carries its own sudo).
+            if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $pkg; then
+                echo "  installed '$pkg'."
+                success=1
+                break
+            fi
+
+            echo "  '$pkg' failed to install, trying the next option..."
+        done
     elif [[ "$PKG_MANAGER" == "dnf" || "$PKG_MANAGER" == "yum" ]]; then
         eval "$INSTALL_CMD $yum_pkg" && success=1
     elif [ "$PKG_MANAGER" == "pacman" ]; then
@@ -86,6 +127,34 @@ mysql_exec() {
     else
         sudo mysql -e "$1"
     fi
+}
+
+# Same, but quiet and returning only raw rows — for reading state rather than changing it.
+mysql_query() {
+    if command -v mariadb &> /dev/null; then
+        sudo mariadb -N -B -e "$1" 2>/dev/null
+    else
+        sudo mysql -N -B -e "$1" 2>/dev/null
+    fi
+}
+
+# The client binary an ordinary (non-root) user would connect with.
+mysql_client() {
+    if command -v mariadb &> /dev/null; then echo "mariadb"; else echo "mysql"; fi
+}
+
+# Escape a value for use inside single quotes in SQL.
+#
+# Backslash first, then the quote — the other order would double-escape. Without this, a
+# password containing an apostrophe silently truncates the SQL statement, and one
+# containing a backslash gets stored as something other than what was typed. Either way
+# the stored password stops matching the one in .env and every later connection is
+# denied, with nothing to indicate why.
+sql_escape() {
+    local v=$1
+    v=${v//\\/\\\\}
+    v=${v//\'/\\\'}
+    printf '%s' "$v"
 }
 
 # --- Prompt User ---
@@ -141,6 +210,46 @@ read -p "Enter Admin Username: " DB_USER
 read -s -p "Enter Admin Password: " DB_PASS
 echo ""
 
+# Which hosts the grant covers.
+#
+# This is not cosmetic. A user granted only on '%' or only on a remote IP is genuinely
+# not permitted to connect from this machine, and the server reports that as
+# "Access denied for user 'x'@'localhost'" — which reads like a wrong password and sends
+# people hunting for the wrong problem entirely.
+DB_USER_HOST="localhost"
+
+if [ "$DB_TYPE" == "MySQL" ]; then
+    echo ""
+    echo "Which host should this user be allowed to connect from?"
+    echo "  1) localhost — the app runs on this same server (recommended)"
+    echo "  2) any host (%) — for connections from other machines"
+    echo "  3) a specific IP or hostname"
+    read -p "Select an option (1-3) [1]: " HOST_CHOICE
+    HOST_CHOICE=${HOST_CHOICE:-1}
+
+    case $HOST_CHOICE in
+        1) DB_USER_HOST="localhost" ;;
+        2) DB_USER_HOST="%" ;;
+        3)
+            read -p "Enter the IP or hostname: " DB_USER_HOST
+            if [ -z "$DB_USER_HOST" ]; then
+                echo "No host given; falling back to localhost."
+                DB_USER_HOST="localhost"
+            fi
+            ;;
+        *) echo "Unrecognised choice; using localhost."; DB_USER_HOST="localhost" ;;
+    esac
+
+    echo "User will be created as '${DB_USER}'@'${DB_USER_HOST}'."
+
+    # A grant that excludes this machine while the app runs on it is the single most
+    # likely way to end up locked out, so say so now rather than after the fact.
+    if [ "$DB_USER_HOST" != "localhost" ] && [ "$DB_USER_HOST" != "%" ]; then
+        echo "Note: the app on THIS server will not be able to connect with that user."
+        echo "      If the app runs here too, choose localhost, or re-run for a second grant."
+    fi
+fi
+
 ADVANCED_SETTINGS="n"
 read -p "Do you want to configure advanced settings (e.g. expose to specific IP/everyone, custom port)? (y/n): " ADVANCED_SETTINGS
 
@@ -157,19 +266,30 @@ echo ""
 echo "Starting installation for $DB_TYPE..."
 
 if [ "$DB_TYPE" == "MySQL" ]; then
-    apt_pkg="mysql-server"
+    # Two apt candidates, most preferred first.
+    #
+    # Ubuntu carries Oracle's mysql-server. Debian does not — there it exists only as a
+    # name other packages refer to, so apt says "Package 'mysql-server' has no
+    # installation candidate" and the run dies. Debian's own build is mariadb-server.
+    #
+    # Falling back rather than branching on distro ID is deliberate: derivatives
+    # misreport their ID constantly, and "whatever apt can actually install" is the
+    # question we care about. MariaDB is a drop-in here — the app talks to it through
+    # PDO's mysql driver, and the rest of this script already assumes MariaDB on every
+    # other package manager.
+    apt_pkg="mysql-server|mariadb-server"
     yum_pkg="mariadb-server"
     pacman_pkg="mariadb"
     brew_pkg="mysql"
-    
+
     if [ -n "$DB_VERSION" ]; then
-        apt_pkg="mysql-server-${DB_VERSION}"
+        apt_pkg="mysql-server-${DB_VERSION}|mariadb-server-${DB_VERSION}"
         pacman_pkg="mariadb${DB_VERSION}"
         brew_pkg="mysql@${DB_VERSION}"
     fi
-    
+
     install_pkg "$apt_pkg" "$yum_pkg" "$pacman_pkg" "$brew_pkg"
-    
+
     # Init DB on yum/dnf/pacman
     if [[ "$PKG_MANAGER" == "dnf" || "$PKG_MANAGER" == "yum" || "$PKG_MANAGER" == "pacman" ]]; then
         if [ "$PKG_MANAGER" == "pacman" ]; then
@@ -178,14 +298,83 @@ if [ "$DB_TYPE" == "MySQL" ]; then
         sudo systemctl enable mariadb --now || sudo systemctl enable mysqld --now || true
     fi
 
+    # apt normally starts the server itself, but not in a container or when policy-rc.d
+    # blocked it — and the CREATE DATABASE calls below need a live socket either way.
+    if [ "$PKG_MANAGER" == "apt" ] && command -v systemctl &> /dev/null; then
+        sudo systemctl enable mariadb --now 2>/dev/null \
+            || sudo systemctl enable mysql --now 2>/dev/null \
+            || sudo systemctl enable mysqld --now 2>/dev/null \
+            || true
+    fi
+
     echo "Configuring MySQL / MariaDB..."
     # Ensure service is up before queries
     sleep 3
-    mysql_exec "CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`;"
-    mysql_exec "CREATE USER IF NOT EXISTS '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';"
-    mysql_exec "GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'%';"
+
+    DB_PASS_SQL=$(sql_escape "$DB_PASS")
+
+    mysql_exec "CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    mysql_exec "CREATE USER IF NOT EXISTS '${DB_USER}'@'${DB_USER_HOST}' IDENTIFIED BY '${DB_PASS_SQL}';"
+
+    # Set the password explicitly after creating the user.
+    #
+    # CREATE USER IF NOT EXISTS does nothing at all when the user already exists — it does
+    # not update the password. Re-running this script with a new password therefore
+    # appeared to succeed while leaving the old password in place, and every later
+    # connection was denied. ALTER USER makes the outcome match what was just typed,
+    # whether the user is new or not.
+    mysql_exec "ALTER USER '${DB_USER}'@'${DB_USER_HOST}' IDENTIFIED BY '${DB_PASS_SQL}';"
+
+    mysql_exec "GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'${DB_USER_HOST}';"
     mysql_exec "FLUSH PRIVILEGES;"
-    
+
+    # --- Warn about rows that would shadow this grant ---------------------------
+    #
+    # Privilege matching picks the most specific host row, not the most permissive. So
+    # 'user'@'localhost' beats 'user'@'%' for local connections, and an anonymous
+    # ''@'localhost' row beats a named user entirely. Either can deny a user that plainly
+    # exists with the right password, which is close to impossible to diagnose blind.
+    ANON_ROWS=$(mysql_query "SELECT CONCAT('''', user, '''@''', host, '''') FROM mysql.user WHERE user = '';")
+    if [ -n "$ANON_ROWS" ]; then
+        echo ""
+        echo "Warning: this server has anonymous user row(s):"
+        echo "$ANON_ROWS" | sed 's/^/  /'
+        echo "  These take precedence over named users for local connections and can cause"
+        echo "  'Access denied' for '${DB_USER}'. Remove them with:"
+        echo "    sudo $(mysql_client) -e \"DELETE FROM mysql.user WHERE user=''; FLUSH PRIVILEGES;\""
+    fi
+
+    OTHER_HOSTS=$(mysql_query "SELECT host FROM mysql.user WHERE user = '${DB_USER}' AND host <> '${DB_USER_HOST}';")
+    if [ -n "$OTHER_HOSTS" ]; then
+        echo ""
+        echo "Note: '${DB_USER}' also exists for host(s):"
+        echo "$OTHER_HOSTS" | sed 's/^/  /'
+        echo "  A more specific host row wins, so an old entry can override the one just set."
+        echo "  Drop one with:  sudo $(mysql_client) -e \"DROP USER '${DB_USER}'@'<host>';\""
+    fi
+
+    # --- Prove the credentials actually work ------------------------------------
+    #
+    # Everything above can succeed while leaving a login that does not work. Testing it
+    # here turns a silent problem into an immediate, specific one.
+    if [ "$DB_USER_HOST" == "localhost" ] || [ "$DB_USER_HOST" == "%" ]; then
+        echo ""
+        echo "Verifying the credentials..."
+        if $(mysql_client) -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" -e "SELECT 1;" > /dev/null 2>&1; then
+            echo "  OK — '${DB_USER}' can connect to '${DB_NAME}' from this server."
+            echo ""
+            echo "Put these in your .env:"
+            echo "  DB_HOST=127.0.0.1"
+            echo "  DB_DATABASE=${DB_NAME}"
+            echo "  DB_USERNAME=${DB_USER}"
+            echo "  DB_PASSWORD=<the password you just entered>"
+        else
+            echo "  FAILED — the user was created but cannot log in."
+            echo "  Check the notes above for shadowing rows, then inspect with:"
+            echo "    sudo $(mysql_client) -e \"SELECT user, host, plugin FROM mysql.user WHERE user='${DB_USER}';\""
+        fi
+    fi
+
     if [[ "$ADVANCED_SETTINGS" == "y" || "$ADVANCED_SETTINGS" == "Y" ]]; then
         echo "Applying advanced settings..."
         MYSQL_CONF="/etc/mysql/mysql.conf.d/mysqld.cnf"

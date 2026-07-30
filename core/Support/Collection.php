@@ -138,14 +138,16 @@ class Collection implements IteratorAggregate, Countable, JsonSerializable, Arra
         return new ArrayIterator($this->items);
     }
 
-    public function jsonSerialize(): mixed
+    #[\ReturnTypeWillChange]
+    public function jsonSerialize()
     {
         return $this->toArray();
     }
 
     // ArrayAccess methods
     public function offsetExists($offset): bool { return isset($this->items[$offset]); }
-    public function offsetGet($offset): mixed { return $this->items[$offset] ?? null; }
+    #[\ReturnTypeWillChange]
+    public function offsetGet($offset) { return $this->items[$offset] ?? null; }
     public function offsetSet($offset, $value): void {
         if (is_null($offset)) { $this->items[] = $value; } else { $this->items[$offset] = $value; }
     }

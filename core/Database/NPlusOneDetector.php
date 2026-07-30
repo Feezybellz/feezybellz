@@ -56,7 +56,7 @@ class NPlusOneDetector
         self::$instance = new self($threshold, $throw);
 
         DB::listen(function (string $sql, array $params) {
-            self::$instance?->recordQuery($sql);
+            if (self::$instance !== null) { self::$instance->recordQuery($sql); }
         });
 
         return self::$instance;

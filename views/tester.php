@@ -111,6 +111,7 @@
                             <div class="tab" data-tab="auth-tab">Auth</div>
                             <div class="tab" data-tab="files-tab">Files</div>
                             <div class="tab" data-tab="headers-tab">Headers</div>
+                            <div class="tab" data-tab="cookies-tab">Cookies</div>
                         </div>
 
                         <div id="body-tab" class="tab-content">
@@ -185,10 +186,21 @@
                         <div id="headers-tab" class="tab-content hidden">
                             <div class="flex-between" style="margin-bottom: 12px;">
                                 <label style="margin:0">Headers</label>
-                                <button type="button" class="secondary" id="add-header" style="padding: 4px 8px; font-size: 12px;">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                    Add Header
-                                </button>
+                                <div style="display: flex; gap: 8px;">
+                                    <button type="button" class="secondary" id="bulk-paste-btn" style="padding: 4px 8px; font-size: 12px;">
+                                        Paste Raw
+                                    </button>
+                                    <button type="button" class="secondary" id="add-header" style="padding: 4px 8px; font-size: 12px;">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                        Add Header
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="bulk-paste-container" class="hidden" style="margin-bottom: 12px;">
+                                <textarea id="bulk-raw-headers" rows="6" placeholder="authority: twstalker.com&#10;accept: */*&#10;...or...&#10;authority&#10;twstalker.com"></textarea>
+                                <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
+                                    <button type="button" id="parse-raw-btn" style="padding: 4px 12px; font-size: 12px;">Parse & Apply</button>
+                                </div>
                             </div>
                             <div id="headers-list">
                                 <div class="header-row">
@@ -198,6 +210,14 @@
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                                     </button>
                                 </div>
+                            </div>
+                        </div>
+
+                        <div id="cookies-tab" class="tab-content hidden">
+                            <div class="form-group">
+                                <label>Cookies</label>
+                                <textarea id="cookies" rows="4" placeholder="cookie1=value1; cookie2=value2;"></textarea>
+                                <div class="hint">Enter cookies as a raw string (e.g., name=value; name2=value2)</div>
                             </div>
                         </div>
 
@@ -281,6 +301,111 @@
             `;
             headersList.appendChild(row);
         });
+
+        // Bulk Paste Headers Logic
+        const bulkPasteBtn = document.getElementById('bulk-paste-btn');
+        const bulkPasteContainer = document.getElementById('bulk-paste-container');
+        const parseRawBtn = document.getElementById('parse-raw-btn');
+        const bulkRawHeaders = document.getElementById('bulk-raw-headers');
+
+        if (bulkPasteBtn) {
+            bulkPasteBtn.addEventListener('click', () => {
+                bulkPasteContainer.classList.toggle('hidden');
+            });
+        }
+
+        if (parseRawBtn) {
+            parseRawBtn.addEventListener('click', () => {
+                const rawText = bulkRawHeaders.value.trim();
+                if (!rawText) return;
+
+                const lines = rawText.split('\n').map(l => l.trim()).filter(l => l);
+                let parsedHeaders = {};
+                let parsedCookies = '';
+                let method = '';
+                let scheme = '';
+                let authority = '';
+                let path = '';
+
+                let i = 0;
+                while (i < lines.length) {
+                    let line = lines[i];
+
+                    // Format 1: "Key: Value"
+                    let colonIdx = line.indexOf(':');
+                    if (colonIdx > 0 && !line.startsWith(':')) {
+                        const key = line.substring(0, colonIdx).trim();
+                        const val = line.substring(colonIdx + 1).trim();
+                        if (key.toLowerCase() === 'cookie') {
+                            parsedCookies = val;
+                        } else {
+                            parsedHeaders[key] = val;
+                        }
+                        i++;
+                    } 
+                    // Format 2: "Key \n Value"
+                    else {
+                        const key = line;
+                        if (i + 1 < lines.length) {
+                            const val = lines[i+1];
+                            
+                            if (key.toLowerCase() === 'cookie') {
+                                parsedCookies = val;
+                            } else if (key.startsWith(':')) {
+                                if (key === ':method') method = val;
+                                if (key === ':scheme') scheme = val;
+                                if (key === ':authority') authority = val;
+                                if (key === ':path') path = val;
+                            } else {
+                                parsedHeaders[key] = val;
+                            }
+                            i += 2;
+                        } else {
+                            i++;
+                        }
+                    }
+                }
+
+                headersList.innerHTML = '';
+                
+                for (const [key, val] of Object.entries(parsedHeaders)) {
+                    const row = document.createElement('div');
+                    row.className = 'header-row';
+                    
+                    const safeKey = key.replace(/"/g, '&quot;');
+                    const safeVal = val.replace(/"/g, '&quot;');
+
+                    row.innerHTML = `
+                        <input type="text" placeholder="Header Name" class="header-key" value="${safeKey}">
+                        <input type="text" placeholder="Value" class="header-value" value="${safeVal}">
+                        <button type="button" class="danger remove-header">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                        </button>
+                    `;
+                    headersList.appendChild(row);
+                }
+
+                if (parsedCookies) {
+                    document.getElementById('cookies').value = parsedCookies;
+                }
+
+                if (scheme && authority && path) {
+                    document.getElementById('url').value = `${scheme}://${authority}${path}`;
+                }
+                if (method) {
+                    const methodSelect = document.getElementById('method');
+                    for (let opt of methodSelect.options) {
+                        if (opt.value === method.toUpperCase()) {
+                            methodSelect.value = opt.value;
+                            break;
+                        }
+                    }
+                }
+
+                bulkPasteContainer.classList.add('hidden');
+                bulkRawHeaders.value = '';
+            });
+        }
 
         headersList.addEventListener('click', (e) => {
             if (e.target.closest('.remove-header')) {
@@ -400,6 +525,11 @@
                 formData.append('proxy_body_type', selectedBodyType);
                 formData.append('proxy_body', bodyContent);
                 formData.append('proxy_file_field', fileFieldName);
+
+                const cookiesContent = document.getElementById('cookies').value.trim();
+                if (cookiesContent) {
+                    formData.append('proxy_cookies', cookiesContent);
+                }
 
                 // Add Auth token to headers
                 const authTypeValue = document.getElementById('auth-type').value;

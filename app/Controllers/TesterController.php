@@ -35,6 +35,7 @@ class TesterController
         $headersInput = $request->input('proxy_headers', []);
         $bodyType = $request->input('proxy_body_type', 'none');
         $bodyContent = $request->input('proxy_body', '');
+        $cookiesInput = $request->input('proxy_cookies', '');
         
         $ch = curl_init();
         
@@ -52,6 +53,10 @@ class TesterController
             foreach ($headersInput as $key => $val) {
                 if (!empty($key)) $curlHeaders[] = "$key: $val";
             }
+        }
+
+        if (!empty($cookiesInput)) {
+            curl_setopt($ch, CURLOPT_COOKIE, $cookiesInput);
         }
 
         // Handle Body and Files

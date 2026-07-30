@@ -65,11 +65,11 @@ class QueueWorkCommand extends Command
             max(1, (int) $this->option('tries', 3)),
             max(0, (int) $this->option('backoff', 5)),
             function (string $level, string $message) {
-                match ($level) {
-                    'success' => $this->success($message),
-                    'error'   => $this->error($message),
-                    default   => $this->line($message),
-                };
+                switch ($level) {
+                    case 'success': $this->success($message); break;
+                    case 'error':   $this->error($message); break;
+                    default:        $this->line($message); break;
+                }
             }
         );
     }
