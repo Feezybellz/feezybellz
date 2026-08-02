@@ -32,6 +32,16 @@ Router::get('/db-test', function(Request $request, Response $response) {
 Router::get('/smtp-tester', [\App\Controllers\SmtpTesterController::class, 'index']);
 Router::post('/smtp-tester', [\App\Controllers\SmtpTesterController::class, 'index']);
 
+Router::get('/image-tester', [\App\Controllers\ImageTesterController::class, 'index']);
+Router::post('/image-tester', [\App\Controllers\ImageTesterController::class, 'process']);
+
+Router::get('/__captcha/refresh', [\Framework\Core\Captcha\Captcha::class, 'refreshEndpoint']);
+Router::get('/captcha-tester', [\App\Controllers\CaptchaTesterController::class, 'index']);
+Router::get('/captcha-tester/challenge', [\App\Controllers\CaptchaTesterController::class, 'generateChallenge']);
+Router::get('/captcha-tester/render', [\App\Controllers\CaptchaTesterController::class, 'renderField']);
+Router::post('/captcha-tester/verify-manual', [\App\Controllers\CaptchaTesterController::class, 'verifyManual']);
+Router::post('/captcha-tester/verify-middleware', 'captcha:demo_form', [\App\Controllers\CaptchaTesterController::class, 'verifyMiddleware']);
+
 Router::get('/tester', [\App\Controllers\TesterController::class, 'index']);
 Router::any('/tester/handle', [\App\Controllers\TesterController::class, 'handle']);
 

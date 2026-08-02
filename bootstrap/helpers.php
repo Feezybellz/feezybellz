@@ -725,4 +725,50 @@ if (!function_exists('session')) {
     }
 }
 
+if (!function_exists('image')) {
+    /**
+     * Load an image processing instance or access the Image factory manager.
+     *
+     * @param mixed $source $_FILES array, file path, URL, or raw binary
+     * @param string|null $driver Override driver ('gd' or 'imagick')
+     * @return \Framework\Core\Image\Drivers\ImageDriverInterface|\Framework\Core\Image\Image
+     */
+    function image($source = null, ?string $driver = null)
+    {
+        if ($source !== null && $source !== '') {
+            return \Framework\Core\Image\Image::load($source, $driver);
+        }
 
+        return new \Framework\Core\Image\Image();
+    }
+}
+
+if (!function_exists('captcha')) {
+    /**
+     * Get the Captcha engine class or render a named challenge field.
+     *
+     * @param string|null $name
+     * @return \Framework\Core\Captcha\Captcha|string
+     */
+    function captcha(?string $name = null)
+    {
+        if ($name !== null && $name !== '') {
+            return \Framework\Core\Captcha\Captcha::captcha_field($name);
+        }
+        return new \Framework\Core\Captcha\Captcha();
+    }
+}
+
+if (!function_exists('captcha_field')) {
+    /**
+     * Generate an intelligent Captcha / PoW hidden challenge and solver script.
+     *
+     * @param string|null $name
+     * @param array $options
+     * @return string
+     */
+    function captcha_field(?string $name = null, array $options = []): string
+    {
+        return \Framework\Core\Captcha\Captcha::captcha_field($name, $options);
+    }
+}

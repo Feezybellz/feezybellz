@@ -38,6 +38,7 @@ class Kernel
      */
     protected array $routeMiddleware = [
         'auth'     => \Framework\Core\Http\Middleware\Authenticate::class,
+        'captcha'  => \Framework\Core\Captcha\CaptchaMiddleware::class,
         'csrf'     => \Framework\Core\Http\Middleware\CsrfMiddleware::class,
         'cors'     => \Framework\Core\Http\Middleware\CorsMiddleware::class,
         'security' => \Framework\Core\Http\Middleware\SecurityHeadersMiddleware::class,
