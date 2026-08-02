@@ -479,6 +479,10 @@
                             <label>Opacity (%)</label>
                             <input type="number" name="wm_opacity" value="85" min="1" max="100">
                         </div>
+                        <div>
+                            <label>Rotate (°)</label>
+                            <input type="number" name="wm_angle" value="0" step="5" placeholder="0 = none, e.g. 45">
+                        </div>
                     </div>
 
                     <div style="margin-top: 1rem;">

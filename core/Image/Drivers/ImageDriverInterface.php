@@ -104,9 +104,10 @@ interface ImageDriverInterface
      * @param int $offsetY Vertical offset padding in pixels
      * @param int $opacity Opacity percentage (0-100)
      * @param int|null $maxSizePercent Max percentage of target image width/height the watermark should consume
+     * @param float $angle Rotation angle in degrees for the watermark
      * @return self
      */
-    public function watermark($watermarkSource, string $position = 'bottom-right', int $offsetX = 10, int $offsetY = 10, int $opacity = 100, ?int $maxSizePercent = 20): self;
+    public function watermark($watermarkSource, string $position = 'bottom-right', int $offsetX = 10, int $offsetY = 10, int $opacity = 100, ?int $maxSizePercent = 20, float $angle = 0.0): self;
 
     /**
      * Write text watermark/overlay onto the image.

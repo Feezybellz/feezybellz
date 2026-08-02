@@ -98,7 +98,8 @@ class ImageTesterController
 
                 $pos = $input['wm_position'] ?? 'bottom-right';
                 $opacity = (int) ($input['wm_opacity'] ?? 90);
-                $img->watermark($logoSource, $pos, 20, 20, $opacity, 25);
+                $wmAngle = (float) ($input['wm_angle'] ?? 0);
+                $img->watermark($logoSource, $pos, 20, 20, $opacity, 25, $wmAngle);
             }
 
             // 7. Text Watermark / Overlay
@@ -145,7 +146,7 @@ class ImageTesterController
                 'execution_ms' => $elapsedMs,
                 'pipeline' => $pipelineLogs
             ]);
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             return Response::setStatusCode(500)->json([
                 'success' => false,
                 'error' => $e->getMessage(),

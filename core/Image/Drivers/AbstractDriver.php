@@ -240,7 +240,7 @@ abstract class AbstractDriver implements ImageDriverInterface
         }
 
         // GD alpha ranges from 0 (opaque) to 127 (transparent)
-        $alphaGd = (int) round((255 - $a) / 2);
+        $alphaGd = (int) max(0, min(127, round((255 - $a) * 127 / 255)));
         // Float alpha from 0.0 (transparent) to 1.0 (opaque)
         $alphaFloat = round($a / 255, 2);
 

@@ -182,7 +182,7 @@ class GdDriver extends AbstractDriver
         return $this->crop($width, $height, null, null, $position);
     }
 
-    public function watermark($watermarkSource, string $position = 'bottom-right', int $offsetX = 10, int $offsetY = 10, int $opacity = 100, ?int $maxSizePercent = 20): self
+    public function watermark($watermarkSource, string $position = 'bottom-right', int $offsetX = 10, int $offsetY = 10, int $opacity = 100, ?int $maxSizePercent = 20, float $angle = 0.0): self
     {
         if (!$watermarkSource instanceof ImageDriverInterface) {
             $watermark = \Framework\Core\Image\Image::load($watermarkSource, 'gd');
@@ -196,6 +196,10 @@ class GdDriver extends AbstractDriver
             if ($watermark->getWidth() > $maxW || $watermark->getHeight() > $maxH) {
                 $watermark->resize($maxW, $maxH, true, false);
             }
+        }
+
+        if (abs($angle) > 0.001) {
+            $watermark->rotate($angle, '#00000000');
         }
 
         $wWidth = $watermark->getWidth();
