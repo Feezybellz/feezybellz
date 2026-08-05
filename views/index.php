@@ -720,7 +720,6 @@
             <div class="bento-card col-7 intro-card">
                 <div class="card-header-row">
                     <span class="tag-pill">+ Software Engineer</span>
-                    <span class="status-pill"><span class="status-dot"></span> AVAILABLE FOR CONSULT & TOOLS</span>
                 </div>
 
                 <div>
