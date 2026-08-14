@@ -1,6 +1,6 @@
 /**
- * Shelteer ConfirmModal
- * A robust, customizable, promise-based confirmation library.
+ * Shelteer DialogBox
+ * A robust, customizable, promise-based dialog library.
  */
 (function (root, factory) {
     if (typeof define === 'function' && define.amd) {
@@ -8,10 +8,10 @@
     } else if (typeof module === 'object' && module.exports) {
         module.exports = factory();
     } else {
-        root.ConfirmModal = factory();
+        root.DialogBox = factory();
     }
 }(typeof self !== 'undefined' ? self : this, function () {
-    const ConfirmModal = {
+    const DialogBox = {
         _container: null,
         _resolve: null,
 
@@ -106,12 +106,15 @@
                     type: 'info', // info, success, warning, danger
                     confirmText: 'Confirm',
                     cancelText: 'Cancel',
+                    showCancel: true,
                     icon: null,
                     ...options
                 };
 
                 const modal = this._container.querySelector('.sv-confirm-modal');
                 const iconContainer = modal.querySelector('.sv-confirm-icon');
+                const cancelBtn = modal.querySelector('.sv-confirm-btn-cancel');
+                const confirmBtn = modal.querySelector('.sv-confirm-btn-confirm');
                 
                 // Reset classes
                 modal.className = `sv-confirm-modal sv-confirm-${settings.type}`;
@@ -131,8 +134,11 @@
                 // Set Content
                 modal.querySelector('.sv-confirm-title').innerText = settings.title;
                 modal.querySelector('.sv-confirm-message').innerText = settings.message;
-                modal.querySelector('.sv-confirm-btn-cancel').innerText = settings.cancelText;
-                modal.querySelector('.sv-confirm-btn-confirm').innerText = settings.confirmText;
+                
+                cancelBtn.innerText = settings.cancelText;
+                confirmBtn.innerText = settings.confirmText;
+                
+                cancelBtn.style.display = settings.showCancel ? 'block' : 'none';
 
                 this._container.classList.add('active');
                 if (window.lucide) lucide.createIcons();
@@ -148,5 +154,5 @@
         }
     };
 
-    return ConfirmModal;
+    return DialogBox;
 }));

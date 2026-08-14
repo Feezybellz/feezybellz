@@ -87,3 +87,8 @@ Router::group(['subdomain' => '{tenant}'], function() {
         ];
     });
 });
+
+// --- TOOLS ---
+Router::get('/tools', [\App\Controllers\ToolsController::class, 'index']);
+Router::get('/tools/{tool}', [\App\Controllers\ToolsController::class, 'show']);
+Router::post('/tools/remove-ai-metadata', [\App\Controllers\ToolsController::class, 'removeMetadata']);

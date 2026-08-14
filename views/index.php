@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Afeez Adedayo Bello (feezybellz) | Software Engineer</title>
-    <meta name="description" content="Personal software engineering hub of Afeez Adedayo Bello (feezybellz). Architecting high-performance backends, custom web frameworks, and developer tools.">
+    <title>Afeez Adedayo Bello (feezybellz) | Software Engineer & Problem Solver</title>
+    <meta name="description" content="Personal portfolio of Afeez Adedayo Bello (feezybellz). Full-stack software engineer and backend architect specializing in custom frameworks, application security, and scalable infrastructure.">
     <meta name="author" content="Afeez Adedayo Bello">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -45,6 +45,7 @@
             --arrow-hover: #0F172A;
             --input-bg: #F8FAFC;
             --input-border: #E2E8F0;
+            --problem-icon-color: #4F46E5;
         }
 
         [data-theme="dark"] {
@@ -77,6 +78,7 @@
             --arrow-hover: #00F59B;
             --input-bg: #0C1017;
             --input-border: rgba(255, 255, 255, 0.1);
+            --problem-icon-color: #00E5FF;
         }
 
         * {
@@ -241,7 +243,7 @@
             .dock-item svg { width: 16px; height: 16px; }
             .theme-toggle-btn { width: 26px; height: 26px; }
             .dock-cta { padding: 5px 11px; font-size: 0.74rem; }
-            h1 { font-size: 2.6rem; }
+            h1 { font-size: 2.5rem; }
         }
 
         /* Bento Grid Architecture & Mobile Reordering */
@@ -408,10 +410,10 @@
 
         .hero-bio {
             color: var(--text-sub);
-            font-size: 1.08rem;
+            font-size: 1.05rem;
             margin-bottom: 32px;
-            max-width: 540px;
-            line-height: 1.68;
+            max-width: 560px;
+            line-height: 1.7;
         }
 
         .action-row {
@@ -473,7 +475,7 @@
             display: flex;
             flex-direction: column;
             gap: 12px;
-            margin-top: 16px;
+            margin-top: 18px;
         }
 
         .list-item {
@@ -522,16 +524,15 @@
 
         .item-text h4 {
             font-family: 'Outfit', sans-serif;
-            font-size: 1.1rem;
+            font-size: 1.08rem;
             font-weight: 700;
             color: var(--text-main);
-            margin-bottom: 2px;
+            margin-bottom: 3px;
         }
 
         .item-text p {
-            font-size: 0.85rem;
+            font-size: 0.84rem;
             color: var(--text-sub);
-            font-family: 'Fira Code', monospace;
         }
 
         .chevron-arrow {
@@ -547,55 +548,50 @@
             transform: translateX(4px);
         }
 
-        /* Skill Competency Progress Row */
-        .skill-list {
+        /* Human-Readable Problem Solving Rows */
+        .problem-list {
             display: flex;
             flex-direction: column;
-            gap: 16px;
-            margin-top: 12px;
+            gap: 14px;
+            margin-top: 18px;
         }
 
-        .skill-row {
-            padding: 12px 16px;
-            border-radius: 12px;
+        .problem-row {
+            padding: 15px 18px;
+            border-radius: 16px;
             background: var(--bg-card-subtle);
             border: 1px solid var(--border-card);
+            transition: all 0.25s ease;
         }
 
-        .skill-header {
-            display: flex;
-            justify-content: space-between;
+        .problem-row:hover {
+            border-color: var(--border-hover);
+            transform: translateX(4px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.04);
+        }
+
+        .problem-title {
             font-family: 'Outfit', sans-serif;
-            font-weight: 600;
-            font-size: 0.95rem;
-            margin-bottom: 8px;
-            color: var(--text-main);
-            flex-wrap: wrap;
-            gap: 4px;
-        }
-
-        .skill-val {
-            font-family: 'Fira Code', monospace;
-            font-size: 0.78rem;
-            color: var(--status-text);
             font-weight: 700;
+            font-size: 1.02rem;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 5px;
         }
 
-        .bar-bg {
-            width: 100%;
-            height: 6px;
-            background: rgba(0, 0, 0, 0.08);
-            border-radius: 4px;
-            overflow: hidden;
+        .problem-title i {
+            color: var(--problem-icon-color);
+            width: 19px;
+            height: 19px;
+            flex-shrink: 0;
         }
 
-        [data-theme="dark"] .bar-bg { background: rgba(255, 255, 255, 0.08); }
-
-        .bar-fill {
-            height: 100%;
-            background: var(--btn-primary-bg);
-            border-radius: 4px;
-            transition: width 1s ease;
+        .problem-desc {
+            font-size: 0.9rem;
+            color: var(--text-sub);
+            line-height: 1.55;
         }
 
         /* Contact & Social Forms */
@@ -686,13 +682,13 @@
             <a href="#works" class="dock-item" title="Built Systems & Tools">
                 <i data-lucide="cpu"></i>
             </a>
-            <a href="#stack" class="dock-item" title="Technical Matrix">
+            <a href="#problems" class="dock-item" title="How I Solve Problems">
                 <i data-lucide="layers"></i>
             </a>
             <a href="#writing" class="dock-item" title="Engineering Writings">
                 <i data-lucide="book-open"></i>
             </a>
-            <a href="#connect" class="dock-item" title="Initialize Connection">
+            <a href="#connect" class="dock-item" title="Let's Work Together">
                 <i data-lucide="message-square"></i>
             </a>
 
@@ -719,18 +715,18 @@
             
             <div class="bento-card col-7 intro-card">
                 <div class="card-header-row">
-                    <span class="tag-pill">+ Software Engineer</span>
+                    <span class="tag-pill">+ Software Engineer & Problem Solver</span>
                 </div>
 
                 <div>
                     <h1>I'm Afeez Bello.</h1>
                     <p class="hero-bio">
-                        Full-stack software engineer and infrastructure architect (@feezybellz). I specialize in developing scalable high-performance backend systems, bespoke PHP web frameworks, and automated productivity utilities with zero dependency bloat.
+                        I am a full-stack software engineer, backend architect, and dedicated problem solver (@feezybellz). I specialize in taking complex technical challenges and turning them into fast, intuitive web applications and automated tools. Whether building custom high-performance PHP web frameworks from scratch, hardening architectures against security threats, or designing scalable cloud DevOps pipelines, my mission is simple: engineer dependable, elegant software that solves real human and business problems.
                     </p>
                 </div>
 
                 <div class="action-row">
-                    <a href="#works" class="btn-primary">View Built Systems</a>
+                    <a href="#works" class="btn-primary">Explore Featured Projects</a>
                     <button class="btn-secondary" id="copy-btn" onclick="copyEmail()">
                         <i data-lucide="copy"></i>
                         <span id="copy-text">Copy Email</span>
@@ -749,16 +745,16 @@
             </div>
         </div>
 
-        <!-- ROW 2: Featured Built Systems & Competency Matrix -->
+        <!-- ROW 2: Featured Projects & Problem-Solving Showcase -->
         <div class="bento-grid" id="works">
             <div class="bento-card col-6">
                 <div>
                     <div class="card-header-row">
-                        <span class="tag-pill">+ Built Systems & Ecosystem</span>
-                        <a href="https://tools.feezybellz.net.ng" style="font-family: 'Fira Code', monospace; font-size: 0.8rem; color: var(--text-sub); text-decoration: none;">Live Site →</a>
+                        <span class="tag-pill">+ Featured Projects & Software</span>
+                        <a href="https://tools.feezybellz.net.ng" style="font-family: 'Fira Code', monospace; font-size: 0.8rem; color: var(--text-sub); text-decoration: none;">Tools Portal →</a>
                     </div>
-                    <h2>Engineered Software Suite</h2>
-                    <p style="color: var(--text-sub); font-size: 0.95rem;">Interactive showcase of custom frameworks and distributed gateways.</p>
+                    <h2>What I Have Built</h2>
+                    <p style="color: var(--text-sub); font-size: 0.95rem;">Real-world systems, custom architectures, and diagnostic suites built from the ground up.</p>
                 </div>
 
                 <div class="list-container">
@@ -766,8 +762,8 @@
                         <div class="item-left">
                             <div class="icon-badge bg-1"><i data-lucide="zap"></i></div>
                             <div class="item-text">
-                                <h4>Bespoke PHP Web Framework</h4>
-                                <p>PHP 8.2+ &bull; Custom MVC Router &bull; Security Guards</p>
+                                <h4>Bespoke PHP MVC Web Framework</h4>
+                                <p>Built from scratch &bull; Dynamic routing &bull; Built-in security guards</p>
                             </div>
                         </div>
                         <i data-lucide="chevron-right" class="chevron-arrow"></i>
@@ -777,8 +773,8 @@
                         <div class="item-left">
                             <div class="icon-badge bg-2"><i data-lucide="wrench"></i></div>
                             <div class="item-text">
-                                <h4>Tools DevSite Ecosystem</h4>
-                                <p>tools.feezybellz.net.ng &bull; Wildcard Subdomains</p>
+                                <h4>Tools & Utilities Ecosystem</h4>
+                                <p>tools.feezybellz.net.ng &bull; Automated wildcard subdomain routing</p>
                             </div>
                         </div>
                         <i data-lucide="chevron-right" class="chevron-arrow"></i>
@@ -788,19 +784,19 @@
                         <div class="item-left">
                             <div class="icon-badge bg-3"><i data-lucide="mail"></i></div>
                             <div class="item-text">
-                                <h4>Diagnostic & SMTP Suite</h4>
-                                <p>Automated Verification &bull; Image Processing Engine</p>
+                                <h4>Diagnostic & SMTP Test Suite</h4>
+                                <p>Automated verification &bull; High-speed image processing engine</p>
                             </div>
                         </div>
                         <i data-lucide="chevron-right" class="chevron-arrow"></i>
                     </a>
 
-                    <a href="#stack" class="list-item">
+                    <a href="#problems" class="list-item">
                         <div class="item-left">
                             <div class="icon-badge bg-4"><i data-lucide="globe"></i></div>
                             <div class="item-text">
-                                <h4>Multi-Tenant Gateway</h4>
-                                <p>High Throughput &bull; Dynamic Tenant Portals</p>
+                                <h4>Multi-Tenant Gateway Infrastructure</h4>
+                                <p>Scalable platform architecture designed for high throughput</p>
                             </div>
                         </div>
                         <i data-lucide="chevron-right" class="chevron-arrow"></i>
@@ -808,55 +804,65 @@
                 </div>
             </div>
 
-            <!-- Technical Competencies Matrix Card -->
-            <div class="bento-card col-6" id="stack">
+            <!-- How I Solve Problems Card -->
+            <div class="bento-card col-6" id="problems">
                 <div>
                     <div class="card-header-row">
-                        <span class="tag-pill">+ Technical Competency Matrix</span>
+                        <span class="tag-pill">+ How I Solve Problems</span>
                     </div>
-                    <h2>Core Stack & Proficiencies</h2>
-                    <p style="color: var(--text-sub); font-size: 0.95rem;">Engineered metrics across language runtimes and infrastructure.</p>
+                    <h2>Architecting Reliable, Future-Proof Systems</h2>
+                    <p style="color: var(--text-sub); font-size: 0.95rem;">I bring clarity to complex engineering challenges through secure design, lightweight performance, and resilient infrastructure.</p>
                 </div>
 
-                <div class="skill-list">
-                    <div class="skill-row">
-                        <div class="skill-header">
-                            <span>Core PHP & Web Framework Architecture</span>
-                            <span class="skill-val">99% [EXPERT]</span>
+                <div class="problem-list">
+                    <div class="problem-row">
+                        <div class="problem-title">
+                            <i data-lucide="shield-check"></i>
+                            <span>Application Security & Vulnerability Defense</span>
                         </div>
-                        <div class="bar-bg"><div class="bar-fill" style="width: 99%;"></div></div>
+                        <div class="problem-desc">
+                            As a Certified AppSec Practitioner, I proactively harden production architectures, implement WAF defenses, and embed defensive coding practices into the software lifecycle to eliminate security risks before they arise.
+                        </div>
                     </div>
 
-                    <div class="skill-row">
-                        <div class="skill-header">
-                            <span>PostgreSQL & Custom ORM Design</span>
-                            <span class="skill-val">95% [EXPERT]</span>
+                    <div class="problem-row">
+                        <div class="problem-title">
+                            <i data-lucide="cpu"></i>
+                            <span>Custom Architecture & Lightweight Tooling</span>
                         </div>
-                        <div class="bar-bg"><div class="bar-fill" style="width: 95%;"></div></div>
+                        <div class="problem-desc">
+                            When heavy, off-the-shelf software gets in the way, I design tailor-made frameworks, intelligent MVC routers, and zero-dependency developer utilities that do exactly what is needed with maximum speed and zero bloat.
+                        </div>
                     </div>
 
-                    <div class="skill-row">
-                        <div class="skill-header">
-                            <span>Linux Administration & Nginx Proxying</span>
-                            <span class="skill-val">94% [ADVANCED]</span>
+                    <div class="problem-row">
+                        <div class="problem-title">
+                            <i data-lucide="zap"></i>
+                            <span>High-Throughput & Database Optimization</span>
                         </div>
-                        <div class="bar-bg"><div class="bar-fill" style="width: 94%;"></div></div>
+                        <div class="problem-desc">
+                            I structure relational data models, fine-tune database queries, and implement efficient caching gateways so that backend platforms scale effortlessly under heavy concurrency.
+                        </div>
                     </div>
 
-                    <div class="skill-row">
-                        <div class="skill-header">
-                            <span>Go & High-Concurrency Services</span>
-                            <span class="skill-val">88% [ADVANCED]</span>
+                    <div class="problem-row">
+                        <div class="problem-title">
+                            <i data-lucide="server"></i>
+                            <span>Multi-Tenant SaaS Infrastructure</span>
                         </div>
-                        <div class="bar-bg"><div class="bar-fill" style="width: 88%;"></div></div>
+                        <div class="problem-desc">
+                            Experienced in setting up Linux servers, reverse proxy workflows, and wildcard DNS ecosystems to deploy isolated, secure tenant environments at scale.
+                        </div>
                     </div>
 
-                    <div class="skill-row">
-                        <div class="skill-header">
-                            <span>Wildcard DNS & Subdomain Gateways</span>
-                            <span class="skill-val">96% [EXPERT]</span>
+                    <div class="problem-row">
+                        <div class="problem-title">
+                            <i data-lucide="wrench"></i>
+                            <span>Pragmatic System Reliability</span>
                         </div>
-                        <div class="bar-bg"><div class="bar-fill" style="width: 96%;"></div></div>
+                        <div class="problem-desc">
+                            I specialize in diagnosing sluggish or broken codebases and transforming them into maintainable, well-tested, and zero-maintenance solutions designed for 99.9% uptime.
+                        </div>
                     </div>
                 </div>
             </div>
@@ -869,8 +875,8 @@
                     <div class="card-header-row">
                         <span class="tag-pill">+ Engineering Writings</span>
                     </div>
-                    <h2>Technical Deep Dives</h2>
-                    <p style="color: var(--text-sub); font-size: 0.95rem;">Architectural post-mortems and software engineering guides.</p>
+                    <h2>Thoughts & Technical Deep Dives</h2>
+                    <p style="color: var(--text-sub); font-size: 0.95rem;">Practical architectural post-mortems, security insights, and engineering guides.</p>
                 </div>
 
                 <div class="list-container">
@@ -905,8 +911,8 @@
                     <div class="card-header-row">
                         <span class="tag-pill">+ Initialize Connection</span>
                     </div>
-                    <h2>Direct Communication Gateway</h2>
-                    <p style="color: var(--text-sub); font-size: 0.95rem; margin-bottom: 20px;">Available for consulting, architecture review, and collaborative tooling.</p>
+                    <h2>Let's Work Together</h2>
+                    <p style="color: var(--text-sub); font-size: 0.95rem; margin-bottom: 20px;">Whether you need architecture consulting, custom framework engineering, or a dedicated problem solver to help scale your product, I am ready to collaborate.</p>
 
                     <form id="contact-form" onsubmit="handleDispatch(event)">
                         <div class="form-group">
@@ -919,7 +925,7 @@
                         </div>
                         <div class="form-group">
                             <label class="form-label">Message</label>
-                            <textarea class="form-control" required placeholder="Detail your project specifications or inquiry..."></textarea>
+                            <textarea class="form-control" required placeholder="Tell me a bit about your project or inquiry..."></textarea>
                         </div>
                         <button type="submit" class="btn-primary" style="width: 100%; justify-content: center;">Send Message →</button>
                     </form>
