@@ -657,10 +657,17 @@ include __DIR__ . '/partials/header.php';
 
             if (type === 'text') {
                 setTimeout(() => {
-                    const event = new Event('mousedown');
-                    item.dispatchEvent(event);
+                    activateItem(item);
                     const editable = item.querySelector('div[contenteditable]');
-                    if(editable) editable.focus();
+                    if(editable) {
+                        editable.focus();
+                        // Auto-highlight the placeholder text so user can just start typing
+                        const selection = window.getSelection();
+                        const range = document.createRange();
+                        range.selectNodeContents(editable);
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                    }
                 }, 50);
             }
         }
