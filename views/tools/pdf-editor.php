@@ -151,10 +151,10 @@ include __DIR__ . '/partials/header.php';
                     <button class="btn btn-outline" id="btn-sign" title="Sign"><i data-lucide="pen-tool"></i> <span class="hidden-mobile">Sign</span></button>
                     <button class="btn btn-outline" id="btn-whiteout" title="Whiteout"><i data-lucide="eraser"></i> <span class="hidden-mobile">Whiteout</span></button>
                     
-                    <!-- Additional Sejda Tools (Stubbed) -->
-                    <button class="btn btn-outline" id="btn-links" title="Links (Coming Soon)" onclick="DialogBox.show({ title: 'Pro Feature', message: 'Link editing is coming in a future update.', type: 'info', confirmText: 'Got It', showCancel: false })"><i data-lucide="link"></i></button>
-                    <button class="btn btn-outline" id="btn-forms" title="Forms (Coming Soon)" onclick="DialogBox.show({ title: 'Pro Feature', message: 'Form creation is coming in a future update.', type: 'info', confirmText: 'Got It', showCancel: false })"><i data-lucide="list"></i></button>
-                    <button class="btn btn-outline" id="btn-shapes" title="Shapes (Coming Soon)" onclick="DialogBox.show({ title: 'Pro Feature', message: 'Shapes are coming in a future update.', type: 'info', confirmText: 'Got It', showCancel: false })"><i data-lucide="square"></i></button>
+                    <!-- Additional Sejda Tools -->
+                    <button class="btn btn-outline" id="btn-links" title="Links"><i data-lucide="link"></i></button>
+                    <button class="btn btn-outline" id="btn-forms" title="Forms"><i data-lucide="list"></i></button>
+                    <button class="btn btn-outline" id="btn-shapes" title="Shapes"><i data-lucide="square"></i></button>
 
                     <div style="width: 1px; height: 24px; background: var(--border-color); margin: 0 0.5rem;"></div>
                     
@@ -704,8 +704,26 @@ include __DIR__ . '/partials/header.php';
         });
 
         document.getElementById('btn-whiteout').addEventListener('click', () => {
-            const content = `<div style="width: 150px; height: 30px; background-color: #ffffff;"></div>`;
+            const content = `<div style="width: 150px; height: 30px; background-color: #ffffff; resize: both; overflow: hidden;"></div>`;
             setPendingTool('whiteout', content);
+        });
+
+        document.getElementById('btn-shapes').addEventListener('click', () => {
+            const content = `<div style="width: 100px; height: 100px; border: 2px solid #000; background-color: transparent; resize: both; overflow: hidden;"></div>`;
+            setPendingTool('shape', content);
+        });
+
+        document.getElementById('btn-forms').addEventListener('click', () => {
+            const content = `<div style="width: 150px; height: 30px; background-color: rgba(0, 150, 255, 0.1); border: 1px solid rgba(0, 150, 255, 0.5); resize: both; overflow: hidden; display: flex; align-items: center; padding-left: 5px; font-family: sans-serif; font-size: 12px; color: #555;">Text Field</div>`;
+            setPendingTool('form', content);
+        });
+
+        document.getElementById('btn-links').addEventListener('click', () => {
+            const url = prompt("Enter the URL for this link:", "https://");
+            if (url) {
+                const content = `<div data-url="${url}" style="width: 100px; height: 30px; background-color: rgba(255, 200, 0, 0.2); border: 1px dashed rgba(255, 200, 0, 0.8); resize: both; overflow: hidden; display: flex; align-items: center; justify-content: center; font-family: sans-serif; font-size: 12px; color: #a80;">Link Area</div>`;
+                setPendingTool('link', content);
+            }
         });
 
         document.getElementById('btn-undo').addEventListener('click', undoPDF);
@@ -928,6 +946,58 @@ include __DIR__ . '/partials/header.php';
                                 height: rectHeight,
                                 color: PDFLib.rgb(1, 1, 1),
                             });
+                        } else if (type === 'shape') {
+                            const rect = item.querySelector('div');
+                            const rectWidth = rect.offsetWidth * scaleX;
+                            const rectHeight = rect.offsetHeight * scaleY;
+                            const pdfY = height - (y * scaleY) - rectHeight;
+                            const pdfX = x * scaleX;
+                            
+                            pdfPage.drawRectangle({
+                                x: pdfX,
+                                y: pdfY,
+                                width: rectWidth,
+                                height: rectHeight,
+                                borderColor: PDFLib.rgb(0, 0, 0),
+                                borderWidth: 2 * scaleX,
+                            });
+                        } else if (type === 'form') {
+                            const rect = item.querySelector('div');
+                            const rectWidth = rect.offsetWidth * scaleX;
+                            const rectHeight = rect.offsetHeight * scaleY;
+                            const pdfY = height - (y * scaleY) - rectHeight;
+                            const pdfX = x * scaleX;
+                            
+                            const form = pdfLibDoc.getForm();
+                            const textField = form.createTextField(`field_${Date.now()}_${Math.floor(Math.random()*1000)}`);
+                            textField.addToPage(pdfPage, {
+                                x: pdfX,
+                                y: pdfY,
+                                width: rectWidth,
+                                height: rectHeight,
+                            });
+                        } else if (type === 'link') {
+                            const rect = item.querySelector('div');
+                            const url = rect.getAttribute('data-url');
+                            const rectWidth = rect.offsetWidth * scaleX;
+                            const rectHeight = rect.offsetHeight * scaleY;
+                            const pdfY = height - (y * scaleY) - rectHeight;
+                            const pdfX = x * scaleX;
+                            
+                            if (url) {
+                                const linkAnnot = pdfLibDoc.context.obj({
+                                    Type: 'Annot',
+                                    Subtype: 'Link',
+                                    Rect: [pdfX, pdfY, pdfX + rectWidth, pdfY + rectHeight],
+                                    Border: [0, 0, 0],
+                                    A: {
+                                        Type: 'Action',
+                                        S: 'URI',
+                                        URI: PDFLib.PDFString.of(url),
+                                    },
+                                });
+                                pdfPage.node.addAnnot(linkAnnot);
+                            }
                         }
                     }
                 });
