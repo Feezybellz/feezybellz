@@ -56,6 +56,42 @@ class ToolsController
                 'icon' => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg>',
                 'is_external' => true,
                 'tags' => ['directory', 'no-signup', 'open-source', 'browser', 'privacy', 'external']
+            ],
+            [
+                'name' => 'Universal Image Converter',
+                'slug' => 'image-converter',
+                'description' => 'Instantly convert images between WebP, PNG, JPEG, and SVG right in your browser. Lightning fast and secure.',
+                'category' => 'Image Processing',
+                'icon' => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>',
+                'is_external' => false,
+                'tags' => ['image', 'converter', 'webp', 'png', 'jpeg', 'svg', 'client-side']
+            ],
+            [
+                'name' => 'Image Compressor & Resizer',
+                'slug' => 'image-compressor',
+                'description' => 'Bulk optimize, resize, and compress images on your device before uploading anywhere.',
+                'category' => 'Image Processing',
+                'icon' => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>',
+                'is_external' => false,
+                'tags' => ['image', 'compressor', 'resizer', 'optimize', 'bulk', 'client-side']
+            ],
+            [
+                'name' => 'Video to GIF Maker',
+                'slug' => 'video-to-gif',
+                'description' => 'Convert MP4 videos into animated GIFs entirely in your browser using FFmpeg WASM.',
+                'category' => 'Media Processing',
+                'icon' => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>',
+                'is_external' => false,
+                'tags' => ['video', 'gif', 'converter', 'ffmpeg', 'client-side']
+            ],
+            [
+                'name' => 'Color Palette Extractor',
+                'slug' => 'color-extractor',
+                'description' => 'Upload a photo and instantly extract the 5 dominant colors and their HEX/RGB codes.',
+                'category' => 'Image Processing',
+                'icon' => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>',
+                'is_external' => false,
+                'tags' => ['color', 'palette', 'extractor', 'hex', 'rgb', 'image']
             ]
         ];
 
