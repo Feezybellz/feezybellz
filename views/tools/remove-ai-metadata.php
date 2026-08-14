@@ -426,7 +426,7 @@ include __DIR__ . '/partials/header.php';
                 // Get status label
                 let statusLabel = 'Ready to process';
                 if (fileData.status === 'processing') statusLabel = 'Removing metadata...';
-                if (fileData.status === 'success') statusLabel = 'Metadata removed';
+                if (fileData.status === 'success') statusLabel = `Metadata removed &bull; <a href="#" onclick="openGlobalPreview('${fileData.processedDataUri}'); return false;" style="color: var(--primary-color); text-decoration: underline;">Preview</a>`;
                 if (fileData.status === 'error') statusLabel = 'Processing failed';
 
                 let actionsHtml = '';

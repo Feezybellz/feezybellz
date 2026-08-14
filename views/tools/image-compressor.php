@@ -164,8 +164,7 @@
                     
                     zip.file(`${originalName}_optimized.${ext}`, base64Data, {base64: true});
                     
-                    document.getElementById(`status-${item.id}`).innerText = `Reduced from ${oldSize}KB to ${newSize}KB`;
-                    document.getElementById(`status-${item.id}`).style.color = 'var(--primary-color)';
+                    document.getElementById(`status-${item.id}`).innerHTML = `Reduced from ${oldSize}KB to ${newSize}KB &bull; <a href="#" onclick="openGlobalPreview(this.dataset.src); return false;" data-src="${result.dataUrl}" style="color: var(--primary-color); text-decoration: underline; cursor: pointer;">Preview</a>`;
                 } catch (err) {
                     console.error(err);
                     document.getElementById(`status-${item.id}`).innerText = 'error';

@@ -276,8 +276,9 @@
                     const originalName = item.file.name.split('.').slice(0, -1).join('.');
                     zip.file(`${originalName}.${ext}`, base64Data, {base64: true});
                     
-                    document.getElementById(`status-${item.id}`).innerText = 'done';
-                    document.getElementById(`status-${item.id}`).style.color = 'var(--primary-color)';
+                    document.getElementById(`status-${item.id}`).innerHTML = `done &bull; <a href="#" onclick="openGlobalPreview(this.dataset.src); return false;" data-src="${dataUrl}" style="color: var(--primary-color); text-decoration: underline; cursor: pointer;">Preview</a>`;
+                    // Remove the previous hardcoded styling
+                    // document.getElementById(`status-${item.id}`).style.color = 'var(--primary-color)';
                 } catch (err) {
                     console.error(err);
                     document.getElementById(`status-${item.id}`).innerText = 'error';
