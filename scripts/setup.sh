@@ -113,11 +113,12 @@ setup_domain() {
     read -p "Enter the PHP-FPM backend address [default: 127.0.0.1:9000]: " FPM_BACKEND
     FPM_BACKEND=${FPM_BACKEND:-127.0.0.1:9000}
     
-    echo "WWW Redirection Preference:"
-    echo "1) No redirect (serve both www and non-www)"
-    echo "2) Redirect www to non-www (e.g. www.domain.com -> domain.com)"
-    echo "3) Redirect non-www to www (e.g. domain.com -> www.domain.com)"
-    read -p "Select redirection [1-3, default: 1]: " REDIRECT_OPT
+    echo "WWW Subdomain & Redirection Preference:"
+    echo "1) No 'www' alias at all (Best for subdomains, e.g. test.domain.com)"
+    echo "2) Serve both equally (No redirect)"
+    echo "3) Redirect www to non-www (e.g. www.domain.com -> domain.com)"
+    echo "4) Redirect non-www to www (e.g. domain.com -> www.domain.com)"
+    read -p "Select redirection [1-4, default: 1]: " REDIRECT_OPT
     REDIRECT_OPT=${REDIRECT_OPT:-1}
 
     CONF_FILE="/etc/nginx/sites-available/${DOMAIN_NAME}"
@@ -125,10 +126,12 @@ setup_domain() {
     print_info "Creating Nginx configuration for ${DOMAIN_NAME}..."
     
     # Initialize main server block vars
-    MAIN_SERVER_NAME="${DOMAIN_NAME} www.${DOMAIN_NAME}"
+    MAIN_SERVER_NAME="${DOMAIN_NAME}"
     REDIRECT_BLOCK=""
 
     if [ "$REDIRECT_OPT" == "2" ]; then
+        MAIN_SERVER_NAME="${DOMAIN_NAME} www.${DOMAIN_NAME}"
+    elif [ "$REDIRECT_OPT" == "3" ]; then
         MAIN_SERVER_NAME="${DOMAIN_NAME}"
         REDIRECT_BLOCK="
 server {
@@ -137,7 +140,7 @@ server {
     server_name www.${DOMAIN_NAME};
     return 301 \$scheme://${DOMAIN_NAME}\$request_uri;
 }"
-    elif [ "$REDIRECT_OPT" == "3" ]; then
+    elif [ "$REDIRECT_OPT" == "4" ]; then
         MAIN_SERVER_NAME="www.${DOMAIN_NAME}"
         REDIRECT_BLOCK="
 server {
@@ -218,8 +221,13 @@ EOF
         fi
         
         if command -v certbot &> /dev/null; then
-            print_info "Running Certbot for ${DOMAIN_NAME} and www.${DOMAIN_NAME}..."
-            certbot --nginx -d "${DOMAIN_NAME}" -d "www.${DOMAIN_NAME}"
+            if [ "$REDIRECT_OPT" == "1" ]; then
+                print_info "Running Certbot for ${DOMAIN_NAME}..."
+                certbot --nginx -d "${DOMAIN_NAME}"
+            else
+                print_info "Running Certbot for ${DOMAIN_NAME} and www.${DOMAIN_NAME}..."
+                certbot --nginx -d "${DOMAIN_NAME}" -d "www.${DOMAIN_NAME}"
+            fi
             print_success "SSL setup completed!"
         fi
     fi
