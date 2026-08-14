@@ -92,6 +92,24 @@ class ToolsController
                 'icon' => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>',
                 'is_external' => false,
                 'tags' => ['color', 'palette', 'extractor', 'hex', 'rgb', 'image']
+            ],
+            [
+                'name' => 'JWT Decoder',
+                'slug' => 'jwt-decoder',
+                'description' => 'Securely decode JSON Web Tokens (JWT) directly in your browser. Verify headers and payloads instantly.',
+                'category' => 'Security & Developer',
+                'icon' => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" /></svg>',
+                'is_external' => false,
+                'tags' => ['jwt', 'decoder', 'security', 'token', 'developer', 'json']
+            ],
+            [
+                'name' => 'Secure Password Generator',
+                'slug' => 'password-generator',
+                'description' => 'Generate highly secure, random passwords instantly offline. Customize length and complexity.',
+                'category' => 'Security & Developer',
+                'icon' => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>',
+                'is_external' => false,
+                'tags' => ['password', 'generator', 'security', 'random', 'secure']
             ]
         ];
 
