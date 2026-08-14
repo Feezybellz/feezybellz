@@ -165,7 +165,7 @@ include __DIR__ . '/partials/header.php';
                     <button class="btn btn-primary" id="btn-export"><i data-lucide="download"></i> Apply & Download</button>
                 </div>
             </div>
-            <div class="text-formatting-bar" id="textFormattingBar" style="display: none; position: fixed; z-index: 2000; padding: 0.5rem 1.5rem; background-color: var(--nav-dock-bg); backdrop-filter: blur(8px); border: 1px solid var(--border-color); border-radius: 0.5rem; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); align-items: center; transition: none; display: flex; gap: 0.5rem;">
+            <div class="text-formatting-bar" id="textFormattingBar" style="display: none; position: fixed; z-index: 2000; padding: 0.5rem 1.5rem; background-color: var(--nav-dock-bg); backdrop-filter: blur(8px); border: 1px solid var(--border-color); border-radius: 0.5rem; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); align-items: center; transition: none; gap: 0.5rem;">
                 <!-- Font & Size & Color -->
                 <div style="display: flex; gap: 0.5rem; align-items: center; border-right: 1px solid var(--border-color); padding-right: 0.5rem;">
                     <select id="fmt-font" class="fmt-control" style="padding: 0.3rem 0.5rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-color); color: var(--text-main); font-family: inherit;">
