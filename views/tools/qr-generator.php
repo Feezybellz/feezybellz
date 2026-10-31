@@ -302,6 +302,16 @@ include __DIR__ . '/partials/header.php';
             box-shadow: inset 0 0 0 1px rgba(0,0,0,0.1);
         }
 
+        .qr-preview-container.is-transparent {
+            background-image: 
+                linear-gradient(45deg, #e5e7eb 25%, transparent 25%), 
+                linear-gradient(-45deg, #e5e7eb 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #e5e7eb 75%), 
+                linear-gradient(-45deg, transparent 75%, #e5e7eb 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+
         .btn {
             display: inline-flex;
             align-items: center;
@@ -634,10 +644,14 @@ include __DIR__ . '/partials/header.php';
                     </div>
                     <div class="form-group">
                         <label>Background Color</label>
-                        <div class="color-picker-wrap">
+                        <div class="color-picker-wrap" id="bg-color-wrap">
                             <input type="color" id="opt-color-bg" class="color-picker style-trigger" value="#ffffff">
                             <input type="text" id="opt-color-bg-text" class="form-control style-trigger" value="#ffffff" style="flex:1;">
                         </div>
+                        <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; margin-top:0.5rem;">
+                            <input type="checkbox" id="opt-bg-transparent" class="style-trigger">
+                            Transparent Background
+                        </label>
                     </div>
                 </div>
 
@@ -654,6 +668,20 @@ include __DIR__ . '/partials/header.php';
                 <div class="qr-preview-container" id="qr-container">
                     <!-- QR Code will be rendered here -->
                 </div>
+
+                <div class="form-group">
+                    <label for="opt-png-size">PNG Download Size</label>
+                    <select id="opt-png-size" class="form-control">
+                        <option value="500">500 × 500 px (web)</option>
+                        <option value="1000">1000 × 1000 px (documents)</option>
+                        <option value="2000" selected>2000 × 2000 px (print)</option>
+                        <option value="4000">4000 × 4000 px (large print)</option>
+                    </select>
+                </div>
+
+                <p id="transparent-warning" style="display: none; font-size: 0.85rem; color: #b45309; margin: 0 0 1rem 0;">
+                    Transparent PNGs can be hard to scan on dark backgrounds. Place the code on a light background.
+                </p>
                 
                 <button id="btn-dl-png" class="btn">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -673,8 +701,10 @@ include __DIR__ . '/partials/header.php';
     </div>
 
     <script>
-        // Setup QR Code instance
-        const qrCode = new QRCodeStyling({
+        // Setup QR Code instance.
+        // qrOptions holds the current settings so the PNG download can be
+        // re-rendered at a higher resolution than the 300px preview.
+        let qrOptions = {
             width: 300,
             height: 300,
             type: "svg",
@@ -694,7 +724,14 @@ include __DIR__ . '/partials/header.php';
                 crossOrigin: "anonymous",
                 margin: 5
             }
-        });
+        };
+        const qrCode = new QRCodeStyling(qrOptions);
+
+        // Update the preview and remember the change for downloads.
+        function applyQR(changes) {
+            qrOptions = { ...qrOptions, ...changes };
+            qrCode.update(changes);
+        }
 
         // Initial Render
         qrCode.append(document.getElementById("qr-container"));
@@ -920,19 +957,38 @@ include __DIR__ . '/partials/header.php';
         }
 
         function updateQRData() {
-            qrCode.update({
+            applyQR({
                 data: compileQRData()
             });
         }
 
         function updateQRDesign() {
-            qrCode.update({
+            const isTransparent = document.getElementById('opt-bg-transparent').checked;
+            const bgWrap = document.getElementById('bg-color-wrap');
+            const qrContainer = document.getElementById('qr-container');
+            
+            if (bgWrap) {
+                if (isTransparent) {
+                    bgWrap.style.opacity = '0.5';
+                    bgWrap.style.pointerEvents = 'none';
+                    if (qrContainer) qrContainer.classList.add('is-transparent');
+                } else {
+                    bgWrap.style.opacity = '1';
+                    bgWrap.style.pointerEvents = 'auto';
+                    if (qrContainer) qrContainer.classList.remove('is-transparent');
+                }
+            }
+
+            const warning = document.getElementById('transparent-warning');
+            if (warning) warning.style.display = isTransparent ? 'block' : 'none';
+
+            applyQR({
                 dotsOptions: {
                     color: document.getElementById('opt-color-fg-text').value,
                     type: document.getElementById('opt-dots').value
                 },
                 backgroundOptions: {
-                    color: document.getElementById('opt-color-bg-text').value,
+                    color: isTransparent ? "transparent" : document.getElementById('opt-color-bg-text').value,
                 },
                 cornersSquareOptions: {
                     type: document.getElementById('opt-corners').value
@@ -942,8 +998,14 @@ include __DIR__ . '/partials/header.php';
         }
 
         // Attach listeners
-        document.querySelectorAll('.data-trigger').forEach(el => el.addEventListener('input', updateQRData));
-        document.querySelectorAll('.style-trigger').forEach(el => el.addEventListener('input', updateQRDesign));
+        document.querySelectorAll('.data-trigger').forEach(el => {
+            el.addEventListener('input', updateQRData);
+            el.addEventListener('change', updateQRData);
+        });
+        document.querySelectorAll('.style-trigger').forEach(el => {
+            el.addEventListener('input', updateQRDesign);
+            el.addEventListener('change', updateQRDesign);
+        });
 
         // Address Geocoding & Suggestions (OpenStreetMap Nominatim)
         let geocodeTimeout;
@@ -1065,7 +1127,10 @@ include __DIR__ . '/partials/header.php';
 
         // Downloads
         document.getElementById('btn-dl-png').addEventListener('click', () => {
-            qrCode.download({ name: "qr-code", extension: "png" });
+            // Render a separate canvas at the chosen size so the PNG stays sharp.
+            const size = parseInt(document.getElementById('opt-png-size').value, 10) || 2000;
+            const hiRes = new QRCodeStyling({ ...qrOptions, width: size, height: size, type: "canvas" });
+            hiRes.download({ name: "qr-code", extension: "png" });
         });
         document.getElementById('btn-dl-svg').addEventListener('click', () => {
             qrCode.download({ name: "qr-code", extension: "svg" });

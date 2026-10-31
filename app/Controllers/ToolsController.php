@@ -144,14 +144,37 @@ class ToolsController
     public function removeMetadata(Request $request): Response
     {
         try {
-            $source = null;
-            if (!empty($_FILES['image']['tmp_name']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
-                $source = $_FILES['image'];
+            // Whole POST body exceeded post_max_size: PHP discards $_FILES and $_POST entirely
+            if (empty($_FILES) && (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
+                return Response::setStatusCode(413)->json([
+                    'success' => false,
+                    'error' => 'Upload exceeds server post_max_size (' . ini_get('post_max_size') . ')',
+                ]);
             }
 
-            if (!$source) {
-                return Response::json(['success' => false, 'error' => 'No image uploaded']);
+            if (!isset($_FILES['image'])) {
+                return Response::setStatusCode(400)->json(['success' => false, 'error' => 'No image uploaded']);
             }
+
+            $uploadError = $_FILES['image']['error'];
+            if ($uploadError !== UPLOAD_ERR_OK || empty($_FILES['image']['tmp_name'])) {
+                $messages = [
+                    UPLOAD_ERR_INI_SIZE   => 'File exceeds server upload_max_filesize (' . ini_get('upload_max_filesize') . ')',
+                    UPLOAD_ERR_FORM_SIZE  => 'File exceeds the form MAX_FILE_SIZE limit',
+                    UPLOAD_ERR_PARTIAL    => 'File was only partially uploaded',
+                    UPLOAD_ERR_NO_FILE    => 'No image uploaded',
+                    UPLOAD_ERR_NO_TMP_DIR => 'Server is missing a temporary upload folder',
+                    UPLOAD_ERR_CANT_WRITE => 'Server failed to write the upload to disk',
+                    UPLOAD_ERR_EXTENSION  => 'A PHP extension blocked the upload',
+                ];
+                $status = in_array($uploadError, [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true) ? 413 : 400;
+                return Response::setStatusCode($status)->json([
+                    'success' => false,
+                    'error' => $messages[$uploadError] ?? 'Upload failed (error code ' . $uploadError . ')',
+                ]);
+            }
+
+            $source = $_FILES['image'];
 
             $img = image($source);
             
