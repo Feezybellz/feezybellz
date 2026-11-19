@@ -119,6 +119,15 @@ class ToolsController
                 'icon' => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 11a8 8 0 0116 0" /></svg>',
                 'is_external' => false,
                 'tags' => ['gyroscope', 'motion', 'sensor', 'orientation', 'tilt', 'accelerometer', 'mobile', 'hardware']
+            ],
+            [
+                'name' => '3D Room Scanner & Floorplan',
+                'slug' => 'room-scanner',
+                'description' => 'Measure and scan any room using camera and phone gyroscope. Generates 3D models and exports to .OBJ in real time.',
+                'category' => 'Sensors & Hardware',
+                'icon' => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>',
+                'is_external' => false,
+                'tags' => ['3d', 'scanner', 'room', 'floorplan', 'cad', 'obj', 'camera', 'gyroscope', 'sensors']
             ]
         ];
 

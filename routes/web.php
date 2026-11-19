@@ -96,5 +96,11 @@ Router::get('/web-gyro', function() {
 Router::get('/gyro', function() {
     return Response::redirect('/tools/web-gyro');
 });
+Router::get('/room-scanner', function() {
+    return Response::redirect('/tools/room-scanner');
+});
+Router::get('/scanner', function() {
+    return Response::redirect('/tools/room-scanner');
+});
 Router::get('/tools/{tool}', [\App\Controllers\ToolsController::class, 'show']);
 Router::post('/tools/remove-ai-metadata', [\App\Controllers\ToolsController::class, 'removeMetadata']);
