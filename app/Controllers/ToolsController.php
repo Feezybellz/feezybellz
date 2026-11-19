@@ -110,6 +110,15 @@ class ToolsController
                 'icon' => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>',
                 'is_external' => false,
                 'tags' => ['password', 'generator', 'security', 'random', 'secure']
+            ],
+            [
+                'name' => 'Gyroscope & Motion Tester',
+                'slug' => 'web-gyro',
+                'description' => 'Real-time mobile gyroscope, device orientation, tilt angles, angular velocity, and acceleration tester.',
+                'category' => 'Sensors & Hardware',
+                'icon' => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 11a8 8 0 0116 0" /></svg>',
+                'is_external' => false,
+                'tags' => ['gyroscope', 'motion', 'sensor', 'orientation', 'tilt', 'accelerometer', 'mobile', 'hardware']
             ]
         ];
 

@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Submit button: loading → success → error</title>
+<!--
+  Motion spec (LottieFiles motion-design skill)
+  ---------------------------------------------
+  Personality : Corporate (default for UI). Clean, firm, 0-3% overshoot,
+                except the success pop which gets a small ease-out-back.
+  Signature   : cubic-bezier(0.2, 0, 0, 1)  (MD3 standard)
+  Durations   : quick 150ms / standard 250ms / slow 400ms
+  Easing rule : entrances decelerate (ease-out), exits accelerate (ease-in),
+                spinner is the only linear motion.
+
+  State        Primary                 Secondary                  Ambient
+  ----------   ---------------------   ------------------------   -----------------------
+  press        scale .97 (60ms)        shadow tightens            -
+  loading      label up+out, spinner   shadow drops, colour dims  shimmer sweep (1.6s loop)
+               scales in (+60ms lag)
+  success      scale pop .94→1 (350ms) check draws (+180ms),      glow ring expands + fades
+               green fill (200ms)      text fades (+230ms)
+  error        shake ±12px, 3 decaying red fill, X draws,         -
+               cycles (360ms)          message slides in (250ms),
+                                       fields go red (30ms stagger)
+
+  Reduced motion: no translate/scale/shake, opacity + colour only,
+  durations halved, spinner becomes an opacity pulse.
+  State is never motion-only: text label + aria-live status for every state.
+-->
+<style>
+  :root {
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --ease-enter:    cubic-bezier(0.05, 0.7, 0.1, 1);
+    --ease-exit:     cubic-bezier(0.3, 0, 1, 1);
+    --ease-back:     cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    --ease-inout:    cubic-bezier(0.45, 0, 0.55, 1);
+
+    --t-quick: 150ms;
+    --t-standard: 250ms;
+    --t-slow: 400ms;
+
+    --brand: #2f5bea;
+    --brand-dim: #4a6fe0;
+    --success: #15803d;   /* green-700: 5:1 contrast with white text */
+    --danger: #dc2626;
+    --ink: #0f172a;
+    --muted: #64748b;
+    --line: #cbd5e1;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    background: #f1f5f9;
+  }
+
+  .card {
+    width: min(420px, calc(100vw - 32px));
+    padding: 32px;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 1px 2px rgb(15 23 42 / .06), 0 8px 24px rgb(15 23 42 / .06);
+  }
+
+  h1 { margin: 0 0 4px; font-size: 1.35rem; }
+  .sub { margin: 0 0 24px; color: var(--muted); font-size: .9rem; }
+
+  /* ---------- Fields ---------- */
+  .field { margin-bottom: 16px; }
+  label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }
+  input {
+    width: 100%;
+    padding: 11px 12px;
+    font: inherit;
+    border: 1.5px solid var(--line);
+    border-radius: 10px;
+    outline: none;
+    transition:
+      border-color var(--t-quick) var(--ease-standard) calc(var(--i, 0) * 30ms),
+      box-shadow   var(--t-quick) var(--ease-standard) calc(var(--i, 0) * 30ms);
+  }
+  input:focus-visible { border-color: var(--brand); box-shadow: 0 0 0 3px rgb(47 91 234 / .18); }
+  input[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 3px rgb(220 38 38 / .12); }
+
+  .outcome { display: flex; gap: 16px; margin: 4px 0 24px; font-size: .85rem; color: var(--muted); }
+  .outcome legend { font-size: .8rem; font-weight: 600; color: var(--ink); padding: 0; margin-bottom: 6px; }
+  .outcome fieldset { border: 0; padding: 0; margin: 0; }
+  .outcome label { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; margin: 0 14px 0 0; }
+
+  /* ---------- Submit button ---------- */
+  .submit {
+    position: relative;
+    width: 100%;
+    height: 52px;
+    border: 0;
+    border-radius: 12px;
+    font-family: inherit;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1;
+    color: #fff;
+    background: var(--brand);
+    cursor: pointer;
+    overflow: visible;
+    isolation: isolate;
+    box-shadow: 0 6px 16px -6px rgb(47 91 234 / .6);
+    transition:
+      background-color 200ms var(--ease-standard),
+      box-shadow var(--t-standard) var(--ease-standard),
+      transform 100ms var(--ease-standard);          /* release */
+  }
+  .submit:hover[data-state="idle"] { background: #2a52d6; }
+  .submit:active[data-state="idle"] {
+    transform: scale(.97);
+    box-shadow: 0 2px 6px -2px rgb(47 91 234 / .6);
+    transition-duration: 200ms, 60ms, 60ms;          /* press is faster than release */
+  }
+  .submit:focus-visible { outline: 3px solid rgb(47 91 234 / .35); outline-offset: 3px; }
+  .submit[aria-disabled="true"] { cursor: default; }
+
+  /* Clip layer keeps shimmer inside the rounded shape; glow sits outside it. */
+  .clip { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; }
+
+  .layer {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    pointer-events: none;
+  }
+
+  /* Exit defaults: accelerate out, quick */
+  .label-idle, .spinner, .label-success, .label-error {
+    opacity: 0;
+    transition:
+      opacity var(--t-quick) var(--ease-exit),
+      transform var(--t-quick) var(--ease-exit);
+  }
+  .label-idle { transform: translateY(-12px); }
+  .spinner    { transform: scale(.6); }
+  .label-success, .label-error { transform: translateY(10px); }
+
+  /* Entrances: decelerate in, ~45% longer than exits, short lag for follow-through */
+  [data-state="idle"]    .label-idle,
+  [data-state="loading"] .spinner,
+  [data-state="success"] .label-success,
+  [data-state="error"]   .label-error {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 220ms var(--ease-enter) 60ms,
+      transform 220ms var(--ease-enter) 60ms;
+  }
+
+  /* Spinner: linear is correct here (continuous rotation) */
+  .spinner svg { width: 22px; height: 22px; animation: spin 1s linear infinite; }
+  .spinner circle { fill: none; stroke: #fff; stroke-width: 2.5; stroke-linecap: round;
+                    stroke-dasharray: 40 100; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Icons draw on via stroke-dashoffset */
+  .icon { width: 20px; height: 20px; fill: none; stroke: #fff; stroke-width: 2.6;
+          stroke-linecap: round; stroke-linejoin: round; }
+  .icon path { stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 0ms; }
+  [data-state="success"] .icon path {
+    stroke-dashoffset: 0;
+    transition: stroke-dashoffset var(--t-quick) var(--ease-enter) 180ms;
+  }
+  [data-state="error"] .icon path {
+    stroke-dashoffset: 0;
+    transition: stroke-dashoffset var(--t-quick) var(--ease-enter) 120ms;
+  }
+  [data-state="error"] .icon path + path { transition-delay: 190ms; }
+
+  .label-success span, .label-error span { opacity: 0; transition: opacity var(--t-quick) var(--ease-exit); }
+  [data-state="success"] .label-success span { opacity: 1; transition: opacity 200ms var(--ease-enter) 230ms; }
+  [data-state="error"]   .label-error span   { opacity: 1; transition: opacity 200ms var(--ease-enter) 170ms; }
+
+  /* ---------- Loading ---------- */
+  .submit[data-state="loading"] {
+    background: var(--brand-dim);
+    box-shadow: 0 2px 8px -4px rgb(47 91 234 / .5);   /* secondary: shadow settles */
+  }
+  .shimmer {                                           /* ambient */
+    position: absolute; inset: 0;
+    background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / .18) 50%, transparent 70%);
+    transform: translateX(-100%);
+    opacity: 0;
+    transition: opacity var(--t-quick) var(--ease-exit);
+  }
+  [data-state="loading"] .shimmer {
+    opacity: 1;
+    animation: sweep 1.6s var(--ease-inout) infinite;
+    transition: opacity var(--t-standard) var(--ease-enter) 200ms;
+  }
+  @keyframes sweep { to { transform: translateX(100%); } }
+
+  /* ---------- Success ---------- */
+  .submit[data-state="success"] {
+    background: var(--success);
+    box-shadow: 0 6px 16px -6px rgb(21 128 61 / .55);
+    animation: pop 350ms var(--ease-back);
+  }
+  @keyframes pop { from { transform: scale(.94); } to { transform: scale(1); } }
+
+  .glow {                                              /* ambient */
+    position: absolute; inset: 0; z-index: -1;
+    border-radius: inherit;
+    border: 2px solid var(--success);
+    opacity: 0;
+    pointer-events: none;
+  }
+  [data-state="success"] .glow { animation: ring 600ms var(--ease-enter) 80ms; }
+  @keyframes ring {
+    from { opacity: .55; transform: scale(1); }
+    to   { opacity: 0;   transform: scale(1.08, 1.4); }
+  }
+
+  /* ---------- Error ---------- */
+  .submit[data-state="error"] {
+    background: var(--danger);
+    box-shadow: 0 6px 16px -6px rgb(220 38 38 / .55);
+    animation: shake 360ms var(--ease-inout);          /* firm, no overshoot, decays to origin */
+  }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    16%      { transform: translateX(-12px); }
+    36%      { transform: translateX(10px); }
+    56%      { transform: translateX(-6px); }
+    76%      { transform: translateX(3px); }
+  }
+
+  .error-msg {
+    margin: 12px 0 0;
+    min-height: 1.4em;
+    font-size: .875rem;
+    color: var(--danger);
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: opacity var(--t-quick) var(--ease-exit), transform var(--t-quick) var(--ease-exit);
+  }
+  .error-msg.show {
+    opacity: 1;
+    transform: none;
+    transition: opacity var(--t-standard) var(--ease-enter), transform var(--t-standard) var(--ease-enter);
+  }
+
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
+  /* ---------- Reduced motion: opacity + colour only, halved durations ---------- */
+  @media (prefers-reduced-motion: reduce) {
+    :root { --t-quick: 80ms; --t-standard: 120ms; }
+    .submit, .submit[data-state] { animation: none !important; transform: none !important; }
+    .label-idle, .spinner, .label-success, .label-error,
+    .error-msg { transform: none !important; }
+    [data-state] .label-idle, [data-state] .spinner,
+    [data-state] .label-success, [data-state] .label-error {
+      transition-property: opacity; transition-duration: 110ms;
+    }
+    .spinner svg { animation: pulse 1.6s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: .4; } }
+    .shimmer, .glow { display: none; }
+    .icon path { stroke-dashoffset: 0 !important; }
+  }
+</style>
+</head>
+<body>
+  <main class="card">
+    <h1>Contact us</h1>
+    <p class="sub">Demo of a submit button with loading, success and error states.</p>
+
+    <form id="form" novalidate>
+      <div class="field">
+        <label for="name">Name</label>
+        <input id="name" name="name" autocomplete="name" required style="--i:0" />
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="email" required style="--i:1" />
+      </div>
+
+      <div class="outcome">
+        <fieldset>
+          <legend>Simulated server response</legend>
+          <label><input type="radio" name="outcome" value="success" checked /> Success</label>
+          <label><input type="radio" name="outcome" value="error" /> Error</label>
+          <label><input type="radio" name="outcome" value="random" /> Random</label>
+        </fieldset>
+      </div>
+
+      <button class="submit" id="submit" type="submit" data-state="idle" aria-disabled="false">
+        <span class="clip"><span class="shimmer"></span></span>
+        <span class="glow" aria-hidden="true"></span>
+
+        <span class="layer label-idle" id="idleText">Send message</span>
+
+        <span class="layer spinner" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /></svg>
+        </span>
+
+        <span class="layer label-success" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24"><path pathLength="1" d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+          <span>Sent</span>
+        </span>
+
+        <span class="layer label-error" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24">
+            <path pathLength="1" d="M7 7l10 10" /><path pathLength="1" d="M17 7L7 17" />
+          </svg>
+          <span id="errorText">Failed</span>
+        </span>
+      </button>
+
+      <p class="error-msg" id="errorMsg" aria-hidden="true"></p>
+      <p class="sr-only" id="status" role="status" aria-live="polite"></p>
+    </form>
+  </main>
+
+<script>
+  const form     = document.getElementById('form');
+  const btn      = document.getElementById('submit');
+  const idleText = document.getElementById('idleText');
+  const errText  = document.getElementById('errorText');
+  const errMsg   = document.getElementById('errorMsg');
+  const status   = document.getElementById('status');
+  const fields   = { name: form.elements.name, email: form.elements.email };
+
+  const SUCCESS_HOLD = 2600;   // how long "Sent" stays before the demo resets
+  const ERROR_HOLD   = 1600;   // how long the red button shows before returning to idle
+  const MIN_LOADING  = 600;    // avoid a spinner flash on fast responses
+
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+
+  function setState(s, label) {
+    btn.dataset.state = s;
+    btn.setAttribute('aria-disabled', String(s !== 'idle'));
+    btn.setAttribute('aria-busy', String(s === 'loading'));
+    if (label) status.textContent = label;
+  }
+
+  function showError(message) {
+    errMsg.textContent = message;
+    errMsg.classList.add('show');
+    errMsg.removeAttribute('aria-hidden');
+  }
+
+  function clearError() {
+    errMsg.classList.remove('show');
+    errMsg.setAttribute('aria-hidden', 'true');
+    Object.values(fields).forEach(f => f.removeAttribute('aria-invalid'));
+  }
+
+  function validate() {
+    const bad = [];
+    if (!fields.name.value.trim()) bad.push(fields.name);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email.value.trim())) bad.push(fields.email);
+    return bad;
+  }
+
+  // Stand-in for fetch(). Replace with a real request.
+  function fakeRequest() {
+    const pick = form.elements.outcome.value;
+    const ok = pick === 'random' ? Math.random() > 0.5 : pick === 'success';
+    return wait(1400).then(() => { if (!ok) throw new Error('Server unavailable'); });
+  }
+
+  async function fail(buttonLabel, message, invalidFields = []) {
+    errText.textContent = buttonLabel;
+    setState('error', message);
+    showError(message);
+    invalidFields.forEach(f => f.setAttribute('aria-invalid', 'true'));  // staggered via --i
+    await wait(ERROR_HOLD);
+    idleText.textContent = 'Try again';
+    setState('idle');
+    if (invalidFields[0]) invalidFields[0].focus();
+  }
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (btn.dataset.state !== 'idle') return;   // ignore double submits
+    clearError();
+
+    const invalid = validate();
+    if (invalid.length) {
+      return fail('Check fields', 'Please enter your name and a valid email address.', invalid);
+    }
+
+    setState('loading', 'Sending message…');
+    try {
+      await Promise.all([fakeRequest(), wait(MIN_LOADING)]);
+      setState('success', 'Message sent.');
+      await wait(SUCCESS_HOLD);
+      form.reset();
+      idleText.textContent = 'Send message';
+      setState('idle');
+    } catch {
+      fail('Failed', "Couldn't send your message. Please try again.");
+    }
+  });
+
+  // Typing in a flagged field clears its error.
+  Object.values(fields).forEach(f =>
+    f.addEventListener('input', () => f.removeAttribute('aria-invalid')));
+</script>
+</body>
+</html>

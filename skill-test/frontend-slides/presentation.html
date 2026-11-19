@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Afeez Bello: Backend &amp; AppSec</title>
+
+<!-- Fonts: Swiss Modern preset (Archivo 800 + Nunito 400) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;800&family=Nunito:wght@400;600&display=swap" rel="stylesheet">
+
+<style>
+/* ===========================================
+   CSS CUSTOM PROPERTIES (THEME)
+   Change these to change the whole look
+   =========================================== */
+:root {
+    --white: #ffffff;
+    --black: #0d0d0d;
+    --red: #ff3300;
+    --grey: #6b6b6b;
+    --rule: #e4e4e4;
+
+    --stage-bg: #0d0d0d;
+    --slide-bg: var(--white);
+
+    --font-display: 'Archivo', sans-serif;
+    --font-body: 'Nunito', sans-serif;
+
+    --pad: 120px;
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    --dur: 0.7s;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ===========================================
+   VIEWPORT BASE (full contents of viewport-base.css)
+   =========================================== */
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--stage-bg, #000); }
+.deck-viewport { position: fixed; inset: 0; overflow: hidden; background: var(--stage-bg, #000); }
+.deck-stage {
+    position: absolute; left: 0; top: 0; width: 1920px; height: 1080px;
+    overflow: hidden; transform-origin: 0 0; background: var(--slide-bg, #fff);
+}
+.slide {
+    position: absolute; inset: 0; width: 1920px; height: 1080px; overflow: hidden;
+    display: block; visibility: hidden; opacity: 0; pointer-events: none;
+    background: var(--slide-bg, #fff);
+}
+.slide.active, .slide.visible { visibility: visible; opacity: 1; pointer-events: auto; z-index: 1; }
+img, video, canvas, svg { max-width: 100%; max-height: 100%; }
+.deck-controls { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 1000; }
+@media print {
+    html, body { width: 1920px; height: auto; overflow: visible; background: #fff; }
+    .deck-viewport { position: static; overflow: visible; background: #fff; }
+    .deck-stage { position: static; width: auto; height: auto; transform: none !important; background: none; }
+    .slide {
+        position: relative; display: block !important; visibility: visible !important;
+        opacity: 1 !important; pointer-events: auto !important;
+        width: 1920px; height: 1080px; break-after: page; page-break-after: always;
+    }
+    .slide:last-child { break-after: auto; page-break-after: auto; }
+    .deck-controls { display: none !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.2s !important; }
+}
+
+/* ===========================================
+   SWISS GRID BACKDROP
+   Visible 12-column grid, the preset's signature element
+   =========================================== */
+.slide::before {
+    content: ""; position: absolute; inset: 0 var(--pad); pointer-events: none;
+    background-image: linear-gradient(90deg, var(--rule) 1px, transparent 1px);
+    background-size: calc((1920px - 2 * var(--pad)) / 12) 100%;
+    opacity: .55;
+}
+
+/* Deck chrome: running header + page number inside each slide */
+.chrome {
+    position: absolute; left: var(--pad); right: var(--pad); top: 64px;
+    display: flex; justify-content: space-between;
+    font: 600 20px/1 var(--font-body); letter-spacing: .14em; text-transform: uppercase; color: var(--grey);
+}
+.chrome b { color: var(--black); font-weight: 600; }
+
+/* ===========================================
+   TYPOGRAPHY
+   =========================================== */
+h1, h2, .big { font-family: var(--font-display); font-weight: 800; color: var(--black); letter-spacing: -0.035em; line-height: .9; }
+h1 { font-size: 200px; }
+h2 { font-size: 120px; }
+p, li { font-family: var(--font-body); color: var(--black); }
+.red { color: var(--red); }
+
+/* ===========================================
+   ANIMATIONS
+   .reveal children animate when their slide gets .visible
+   =========================================== */
+.reveal {
+    opacity: 0; transform: translateY(40px);
+    transition: opacity var(--dur) var(--ease-out-expo), transform var(--dur) var(--ease-out-expo);
+}
+.reveal-left { transform: translateX(-80px); }
+.slide.visible .reveal { opacity: 1; transform: none; }
+.slide.visible .reveal:nth-child(2) { transition-delay: .1s; }
+.slide.visible .reveal:nth-child(3) { transition-delay: .2s; }
+.slide.visible .reveal:nth-child(4) { transition-delay: .3s; }
+.slide.visible .reveal:nth-child(5) { transition-delay: .4s; }
+
+/* Red bar that wipes in from the left */
+.bar { position: absolute; background: var(--red); transform: scaleX(0); transform-origin: left;
+       transition: transform 0.9s var(--ease-out-expo) .15s; }
+.slide.visible .bar { transform: scaleX(1); }
+
+/* ===========================================
+   SLIDE 1: TITLE
+   =========================================== */
+.s-title .bar { left: 0; top: 300px; width: 1180px; height: 28px; }
+.s-title .block { position: absolute; left: var(--pad); top: 380px; }
+.s-title .role { margin-top: 48px; font-size: 40px; max-width: 900px; }
+.s-title .circle {
+    position: absolute; right: 200px; top: 230px; width: 520px; height: 520px; border-radius: 50%;
+    background: var(--black); transform: scale(.6); opacity: 0;
+    transition: transform 1s var(--ease-out-expo) .25s, opacity .6s ease .25s;
+}
+.s-title .circle::after {
+    content: ""; position: absolute; width: 180px; height: 180px; left: -60px; bottom: 40px; background: var(--red);
+}
+.s-title.visible .circle { transform: none; opacity: 1; }
+
+/* ===========================================
+   SLIDE 2: STATEMENT
+   =========================================== */
+.s-statement .wrap { position: absolute; left: var(--pad); top: 300px; width: 1500px; }
+.s-statement .big { font-size: 140px; }
+.s-statement .bar { left: var(--pad); top: 840px; width: 280px; height: 16px; }
+
+/* ===========================================
+   SLIDE 3: STACK (three columns on the grid)
+   =========================================== */
+.s-stack h2 { position: absolute; left: var(--pad); top: 180px; }
+.s-stack .cols { position: absolute; left: var(--pad); right: var(--pad); top: 460px;
+                 display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; }
+.s-stack .col { padding: 0 48px 0 0; border-top: 6px solid var(--black); padding-top: 32px; }
+.s-stack .col:nth-child(2) { border-color: var(--red); }
+.s-stack .label { font: 800 26px/1 var(--font-display); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 32px; }
+.s-stack li { list-style: none; font-size: 40px; line-height: 1.55; }
+
+/* ===========================================
+   SLIDE 4: NUMBER
+   =========================================== */
+.s-number .num { position: absolute; left: var(--pad); top: 160px; font-size: 520px; color: var(--red); line-height: .85; }
+.s-number .copy { position: absolute; left: 1060px; top: 380px; width: 700px; }
+.s-number .copy p { font-size: 44px; line-height: 1.3; }
+.s-number .copy p + p { margin-top: 28px; font-size: 30px; color: var(--grey); }
+
+/* ===========================================
+   SLIDE 5: CLOSING
+   =========================================== */
+.s-close { --slide-bg: var(--black); background: var(--black); }
+.s-close::before { background-image: linear-gradient(90deg, #262626 1px, transparent 1px); opacity: 1; }
+.s-close .chrome, .s-close .chrome b { color: #9a9a9a; }
+.s-close h2 { position: absolute; left: var(--pad); top: 300px; color: var(--white); font-size: 180px; }
+.s-close .links { position: absolute; left: var(--pad); top: 720px; display: flex; gap: 96px; }
+.s-close .links p { color: var(--white); font-size: 38px; }
+.s-close .links span { display: block; font: 600 20px/1 var(--font-body); letter-spacing: .14em; text-transform: uppercase; color: var(--red); margin-bottom: 14px; }
+.s-close .bar { right: 0; top: 0; width: 28px; height: 1080px; transform: scaleY(0); transform-origin: top; }
+.s-close.visible .bar { transform: scaleY(1); }
+
+/* ===========================================
+   PROGRESS BAR (outside slide design, fixed to window)
+   =========================================== */
+.progress { position: fixed; left: 0; bottom: 0; height: 4px; background: var(--red); z-index: 1000;
+            transition: width .4s var(--ease-out-expo); }
+
+/* ===========================================
+   INLINE EDITING
+   Hover top-left corner or press E. Ctrl+S saves to localStorage.
+   =========================================== */
+.edit-hotzone { position: fixed; top: 0; left: 0; width: 80px; height: 80px; z-index: 10000; cursor: pointer; }
+.edit-toggle {
+    position: fixed; top: 16px; left: 16px; z-index: 10001; width: 48px; height: 48px;
+    border: 0; border-radius: 50%; background: var(--red); color: #fff; font-size: 20px; cursor: pointer;
+    opacity: 0; pointer-events: none; transition: opacity .3s ease;
+}
+.edit-toggle.show, .edit-toggle.active { opacity: 1; pointer-events: auto; }
+body.editing [contenteditable="true"] { outline: 2px dashed var(--red); outline-offset: 6px; }
+
+/* ===========================================
+   EXPORT / PRINT MODE
+   Headless export (export-pdf.sh) and browser print show the
+   final state of every slide: no transitions, no deck chrome.
+   =========================================== */
+html.export-mode *, html.export-mode *::before, html.export-mode *::after { transition: none !important; animation: none !important; }
+html.export-mode .progress, html.export-mode .edit-hotzone, html.export-mode .edit-toggle { display: none !important; }
+@media print {
+    .reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+    .bar { transform: none !important; transition: none !important; }
+    .s-title .circle { opacity: 1 !important; transform: none !important; }
+    .progress, .edit-hotzone, .edit-toggle { display: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="deck-viewport">
+  <main class="deck-stage" id="deckStage">
+
+    <!-- 1. Title -->
+    <section class="slide s-title active" aria-label="Title">
+      <div class="chrome"><b>Afeez Bello</b><span>01 / 05</span></div>
+      <div class="bar"></div>
+      <div class="circle" aria-hidden="true"></div>
+      <div class="block">
+        <h1 class="reveal reveal-left">Build it.<br>Secure it.</h1>
+        <p class="role reveal">Afeez Adedayo Bello, backend developer with a focus on application security</p>
+      </div>
+    </section>
+
+    <!-- 2. Statement -->
+    <section class="slide s-statement" aria-label="Approach">
+      <div class="chrome"><b>Approach</b><span>02 / 05</span></div>
+      <div class="wrap">
+        <p class="big reveal">Scalable systems<br>are only useful<br>if they are <span class="red">safe.</span></p>
+      </div>
+      <div class="bar"></div>
+    </section>
+
+    <!-- 3. Stack -->
+    <section class="slide s-stack" aria-label="Stack">
+      <div class="chrome"><b>Stack</b><span>03 / 05</span></div>
+      <h2 class="reveal">What I work with</h2>
+      <div class="cols">
+        <div class="col reveal"><p class="label">Languages</p><ul><li>PHP</li><li>JavaScript</li><li>Python</li></ul></div>
+        <div class="col reveal"><p class="label">Frameworks</p><ul><li>Laravel</li><li>Express.js</li><li>Flask · FastAPI</li></ul></div>
+        <div class="col reveal"><p class="label">Platforms</p><ul><li>AWS · Azure · GCP</li><li>MySQL · MongoDB</li><li>Docker</li></ul></div>
+      </div>
+    </section>
+
+    <!-- 4. Number -->
+    <section class="slide s-number" aria-label="Certification">
+      <div class="chrome"><b>Security</b><span>04 / 05</span></div>
+      <div class="num big reveal">01</div>
+      <div class="copy">
+        <p class="reveal">Certified AppSec Practitioner, The SecOps Group.</p>
+        <p class="reveal">Hands-on with WAF configuration and SSL implementation. Currently going deeper on application security.</p>
+      </div>
+    </section>
+
+    <!-- 5. Closing -->
+    <section class="slide s-close" aria-label="Contact">
+      <div class="chrome"><b>Contact</b><span>05 / 05</span></div>
+      <div class="bar"></div>
+      <h2 class="reveal">Let's build<br>something.</h2>
+      <div class="links">
+        <p class="reveal"><span>X</span>@feezybellz</p>
+        <p class="reveal"><span>LinkedIn</span>in/feezybellz</p>
+        <p class="reveal"><span>Email</span>belloafeez7@gmail.com</p>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div class="progress" id="progress"></div>
+<div class="edit-hotzone"></div>
+<button class="edit-toggle" id="editToggle" title="Edit mode (E)" aria-label="Toggle edit mode">✎</button>
+
+<script>
+/* ===========================================
+   SLIDE PRESENTATION CONTROLLER
+   Keyboard, wheel, touch navigation + stage scaling
+   =========================================== */
+class SlidePresentation {
+    constructor() {
+        this.slides = [...document.querySelectorAll('.slide')];
+        this.stage = document.getElementById('deckStage');
+        this.progress = document.getElementById('progress');
+        this.current = 0;
+        this.wheelLock = false;
+        this.setupStageScale();
+        this.setupKeyboardNav();
+        this.setupWheelNav();
+        this.setupTouchNav();
+        this.showSlide(0);
+    }
+
+    // Scale the 1920×1080 stage uniformly to the window (letterbox, never reflow)
+    setupStageScale() {
+        const scale = () => {
+            const f = Math.min(innerWidth / 1920, innerHeight / 1080);
+            const x = (innerWidth - 1920 * f) / 2, y = (innerHeight - 1080 * f) / 2;
+            this.stage.style.transform = `translate(${x}px, ${y}px) scale(${f})`;
+        };
+        scale();
+        addEventListener('resize', scale);
+    }
+
+    setupKeyboardNav() {
+        document.addEventListener('keydown', e => {
+            if (document.body.classList.contains('editing')) return;
+            if (['ArrowRight', 'ArrowDown', ' ', 'PageDown'].includes(e.key)) { e.preventDefault(); this.next(); }
+            if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); this.prev(); }
+            if (e.key === 'Home') this.showSlide(0);
+            if (e.key === 'End') this.showSlide(this.slides.length - 1);
+        });
+    }
+
+    setupWheelNav() {
+        addEventListener('wheel', e => {
+            if (this.wheelLock || Math.abs(e.deltaY) < 20) return;
+            this.wheelLock = true;
+            e.deltaY > 0 ? this.next() : this.prev();
+            setTimeout(() => (this.wheelLock = false), 700);
+        }, { passive: true });
+    }
+
+    setupTouchNav() {
+        let sx = 0;
+        addEventListener('touchstart', e => (sx = e.touches[0].clientX), { passive: true });
+        addEventListener('touchend', e => {
+            const dx = e.changedTouches[0].clientX - sx;
+            if (Math.abs(dx) > 50) dx < 0 ? this.next() : this.prev();
+        });
+    }
+
+    next() { this.showSlide(this.current + 1); }
+    prev() { this.showSlide(this.current - 1); }
+
+    showSlide(i) {
+        this.current = Math.max(0, Math.min(i, this.slides.length - 1));
+        this.slides.forEach((s, n) => {
+            s.classList.toggle('active', n === this.current);
+            s.classList.toggle('visible', n === this.current);
+            s.setAttribute('aria-hidden', String(n !== this.current));
+        });
+        this.progress.style.width = `${((this.current + 1) / this.slides.length) * 100}%`;
+    }
+}
+
+/* ===========================================
+   INLINE EDITOR
+   Text edits persist to localStorage; Ctrl+S saves
+   =========================================== */
+class InlineEditor {
+    constructor() {
+        this.key = 'fs-edits:' + location.pathname;
+        this.targets = [...document.querySelectorAll('.slide h1, .slide h2, .slide p, .slide li')];
+        this.isActive = false;
+        this.restore();
+    }
+    toggleEditMode() {
+        this.isActive = !this.isActive;
+        document.body.classList.toggle('editing', this.isActive);
+        document.getElementById('editToggle').classList.toggle('active', this.isActive);
+        this.targets.forEach(el => el.setAttribute('contenteditable', String(this.isActive)));
+        if (!this.isActive) this.save();
+    }
+    save() { localStorage.setItem(this.key, JSON.stringify(this.targets.map(el => el.innerHTML))); }
+    restore() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(this.key) || 'null');
+            if (saved && saved.length === this.targets.length) saved.forEach((h, i) => (this.targets[i].innerHTML = h));
+        } catch { /* ignore corrupt storage */ }
+    }
+}
+
+// Automated browsers (e.g. the skill's PDF export) get the static final state
+if (navigator.webdriver) document.documentElement.classList.add('export-mode');
+
+const deck = new SlidePresentation();
+// export-pdf.sh calls window.presentation.goToSlide(i) to sync .visible and the progress bar
+window.presentation = { goToSlide: i => deck.showSlide(i) };
+const editor = new InlineEditor();
+
+// Edit toggle: JS hover with 400ms grace period (per skill guidance)
+const hotzone = document.querySelector('.edit-hotzone');
+const editToggle = document.getElementById('editToggle');
+let hideTimeout = null;
+const hideSoon = () => { hideTimeout = setTimeout(() => { if (!editor.isActive) editToggle.classList.remove('show'); }, 400); };
+hotzone.addEventListener('mouseenter', () => { clearTimeout(hideTimeout); editToggle.classList.add('show'); });
+hotzone.addEventListener('mouseleave', hideSoon);
+editToggle.addEventListener('mouseenter', () => clearTimeout(hideTimeout));
+editToggle.addEventListener('mouseleave', hideSoon);
+hotzone.addEventListener('click', () => editor.toggleEditMode());
+editToggle.addEventListener('click', () => editor.toggleEditMode());
+document.addEventListener('keydown', e => {
+    if ((e.key === 'e' || e.key === 'E') && e.target.getAttribute('contenteditable') !== 'true') editor.toggleEditMode();
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); editor.save(); }
+});
+</script>
+</body>
+</html>

@@ -90,5 +90,11 @@ Router::group(['subdomain' => '{tenant}'], function() {
 
 // --- TOOLS ---
 Router::get('/tools', [\App\Controllers\ToolsController::class, 'index']);
+Router::get('/web-gyro', function() {
+    return Response::redirect('/tools/web-gyro');
+});
+Router::get('/gyro', function() {
+    return Response::redirect('/tools/web-gyro');
+});
 Router::get('/tools/{tool}', [\App\Controllers\ToolsController::class, 'show']);
 Router::post('/tools/remove-ai-metadata', [\App\Controllers\ToolsController::class, 'removeMetadata']);
